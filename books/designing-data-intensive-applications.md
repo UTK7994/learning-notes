@@ -822,12 +822,14 @@ Reasons for distribute a database across multiple machines:
 - Fault tolerance/high availability
 - Latency, having servers at various locations worldwide
 
+utkarsh https://www.youtube.com/watch?v=hzgz867rGHI
+
 ## Replication
 
 Reasons why you might want to replicate data:
 
 - To keep data geographically close to your users
-- Increase availability
+- Increase availability (Fault tolerance or crash of a machine)
 - Increase read throughput
 
 The difficulty in replication lies in handling _changes_ to replicated data. Popular algorithms for replicating changes between nodes: _single-leader_, _multi-leader_, and _leaderless_ replication.
@@ -840,23 +842,29 @@ Every write to the database needs to be processed by every replica. The most com
 
 1. One of the replicas is designated the _leader_ (_master_ or _primary_). Writes to the database must send requests to the leader.
 2. Other replicas are known as _followers_ (_read replicas_, _slaves_, _secondaries_ or _hot stanbys_). The leader sends the data change to all of its followers as part of a _replication log_ or _change stream_.
-3. Reads can be query the leader or any of the followers, while writes are only accepted on the leader.
+3. Reads can be query the leader or any of the followers can accept, while writes are only accepted on the leader.
 
 MySQL, Oracle Data Guard, SQL Server's AlwaysOn Availability Groups, MongoDB, RethinkDB, Espresso, Kafka and RabbitMQ are examples of these kind of databases.
 
 #### Synchronous vs asynchronous
 
-**The advantage of synchronous replication is that the follower is guaranteed to have an up-to-date copy of the data that is consistent with the leader. The disadvantage is that it the synchronous follower doesn't respond, the write cannot be processed.**
+**The advantage of synchronous replication is that the follower is guaranteed to have an up-to-date copy of the data that is consistent with the leader. The disadvantage is that if the synchronous follower doesn't respond, the write cannot be processed.**
 
-It's impractical for all followers to be synchronous. If you enable synchronous replication on a database, it usually means that _one_ of the followers is synchronous, and the others are asynchronous. This guarantees up-to-date copy of the data on at least two nodes (this is sometimes called _semi-synchronous_).
+It's impractical for all followers to be synchronous. If you enable synchronous replication on a database, it usually means that _one_ of the followers is synchronous, and the others are asynchronous. Master here waits for 1 follower to update its log and wait for confirmation. For other followers it just forgets , after sending the request. This guarantees up-to-date copy of the data on at least two nodes (this is sometimes called _semi-synchronous_).
 
 Often, leader-based replication is asynchronous. Writes are not guaranteed to be durable, the main advantage of this approach is that the leader can continue processing writes.
+
+Optimum stratedy will be to send synchronous write to 1 follower and get the conformation from atleast 1 and then send synchronously to others.
 
 #### Setting up new followers
 
 Copying data files from one node to another is typically not sufficient.
 
 Setting up a follower can usually be done without downtime. The process looks like:
+
+utkarsh snapshot https://www.youtube.com/watch?v=7on5wFJZsew
+
+Snapshot is nothing but copy before write where previous values which are to be updated are stored in snapshot. Hence below in point 2 and 3 when follower copies the snapshot and chnages, it get updated.
 
 1. Take a snapshot of the leader's database
 2. Copy the snapshot to the follower node
@@ -892,6 +900,8 @@ For these reasons, some operation teams prefer to perform failovers manually, ev
 
 #### Implementation of replication logs
 
+Logs should be decoupled from Storage Engines
+
 ##### Statement-based replication
 
 The leader logs every _statement_ and sends it to its followers (every `INSERT`, `UPDATE` or `DELETE`).
@@ -917,18 +927,18 @@ Usually is not possible to run different versions of the database in leaders and
 Basically a sequence of records describing writes to database tables at the granularity of a row:
 
 - For an inserted row, the new values of all columns.
-- For a deleted row, the information that uniquely identifies that column.
+- For a deleted row, the information that uniquely identifies that row.
 - For an updated row, the information to uniquely identify that row and all the new values of the columns.
 
 A transaction that modifies several rows, generates several of such logs, followed by a record indicating that the transaction was committed. MySQL binlog uses this approach.
 
-Since logical log is decoupled from the storage engine internals, it's easier to make it backwards compatible.
+Since logical log is decoupled from the storage engine internals, it's easier to make it backward compatible.
 
 Logical logs are also easier for external applications to parse, useful for data warehouses, custom indexes and caches (_change data capture_).
 
 ##### Trigger-based replication
 
-There are some situations were you may need to move replication up to the application layer.
+There are some situations where you may need to move replication up to the application layer.
 
 A trigger lets you register custom application code that is automatically executed when a data change occurs. This is a good opportunity to log this change into a separate table, from which it can be read by an external process.
 
@@ -966,6 +976,8 @@ Some additional issues to consider:
 
 #### Monotonic reads
 
+`Suppose we have master and 2 folowerers f1 and f2. a and b 2 datas are written in seq in master simultaneouly. F1 has replication lags of 1 min and f2 of 2 min. Now clinet reads from f1 after making update in > 1 min and less than 2 min, f1 will give data a, as that is written in 1 min of write to master. Again the read is made but this time with f2 in time >= 1 min and < 2 min , hence no data is found in f2 as a and b are not written in < 2min. Solution to this is to use client hash and go to same replica again and again as monotonicty will be maintained per replica. It just that during replication lag , monotonicity will not be miantained between different replicas`
+
 Because of followers falling behind, it's possible for a user to see things _moving backward in time_.
 
 When you read data, you may see an old value; monotonic reads only means that if one user makes several reads in sequence, they will not see time go backward.
@@ -974,11 +986,17 @@ Make sure that each user always makes their reads from the same replica. The rep
 
 #### Consistent prefix reads
 
+utkarsh https://ebrary.net/64710/computer_science/consistent_prefix_reads
+
 If a sequence of writes happens in a certain order, then anyone reading those writes will see them appear in the same order.
 
 This is a particular problem in partitioned (sharded) databases as there is no global ordering of writes.
 
 A solution is to make sure any writes casually related to each other are written to the same partition.
+
+One solution is to make sure that any writes that are causally related to each other are written to the same partition—but in some applications that cannot be done efficiently. There are also algorithms that explicitly keep track of causal dependencies, a topic that we will return to in “The “happens-before” relationship and concurrency”
+
+![alt text](https://ebrary.net/htm/img/15/554/45.png)
 
 #### Solutions for replication lag
 
@@ -1028,6 +1046,8 @@ For faster collaboration, you may want to make the unit of change very small (li
 
 The biggest problem with multi-leader replication is when conflict resolution is required. This problem does not happen in a single-leader database.
 
+`If we ensure that all writes of a particular record go through same master/datacenter we can achieve multi-leader as well as conflict control hence no conflict will occur then`
+
 ##### Synchronous vs asynchronous conflict detection
 
 In single-leader the second writer can be blocked and wait the first one to complete, forcing the user to retry the write. On multi-leader if both writes are successful, the conflict is only detected asynchronously later in time.
@@ -1060,17 +1080,22 @@ Different ways of achieving convergent conflict resolution.
 Multi-leader replication tools let you write conflict resolution logic using application code.
 
 - **On write.** As soon as the database system detects a conflict in the log of replicated changes, it calls the conflict handler.
-- **On read.** All the conflicting writes are stored. On read, multiple versions of the data are returned to the application. The application may prompt the user or automatically resolve the conflict. CouchDB works this way.
+- **On read.** This is lazy approach. All the conflicting writes are stored. On read, multiple versions of the data are returned to the application. The application may prompt the user or automatically resolve the conflict. CouchDB works this way.
+- Conflict free relicated datatypes which can be concurrently edited by multiple editors by applying locks at very granular levels.
+- 3 way merge as in git (persistent data strcutures)
+- Operational Transformation
 
 #### Multi-leader replication topologies
 
 A _replication topology_ describes the communication paths along which writes are propagated from one node to another.
 
-The most general topology is _all-to-all_ in which every leader sends its writes to every other leader. MySQL uses _circular topology_, where each nodes receives writes from one node and forwards those writes to another node. Another popular topology has the shape of a _star_, one designated node forwards writes to all of the other nodes.
+The most general topology is _all-to-all_ in which every leader sends its writes to every other leader. MySQL uses `_circular topology_`, where each nodes receives writes from one node and forwards those writes to another node. Another popular topology has the shape of a `_star_`, one designated node forwards writes to all of the other nodes.
 
-In circular and star topologies a write might need to pass through multiple nodes before they reach all replicas. To prevent infinite replication loops each node is given a unique identifier and the replication log tags each write with the identifiers of the nodes it has passed through. When a node fails it can interrupt the flow of replication messages.
+In circular and star topologies a write might need to pass through multiple nodes before they reach all replicas. To prevent infinite replication loops each node is given a unique identifier and the replication log tags each write with the identifiers of the nodes it has passed through. When a node fails it can interrupt the flow of replication messages.(as single node failure in cycle or star can lead to stop of replication process).
 
-In all-to-all topology fault tolerance is better as messages can travel along different paths avoiding a single point of failure. It has some issues too, some network links may be faster than others and some replication messages may "overtake" others. To order events correctly. there is a technique called _version vectors_. PostgresSQL BDR does not provide casual ordering of writes, and Tungsten Replicator for MySQL doesn't even try to detect conflicts.
+In all-to-all topology (mesh topology) fault tolerance is better as messages can travel along different paths avoiding a single point of failure. It has some issues too, some network links may be faster than others and some replication messages may "overtake" others. To order events correctly. there is a technique called _version vectors_. PostgresSQL BDR does not provide casual ordering of writes, and Tungsten Replicator for MySQL doesn't even try to detect conflicts.
+
+Example : Suppose we have Client1 which inserts a data to leader 1 and client2 which updates data to leader 2. Now timestamp of insert timestamp of update. Here as we can see timestamp will not work as data is to be inserted first. Suppose now we have leader 3 and it has to get in sync with leader 1 and 2. It first receives the chnage of leader 2 related to update then leader 1 related to insert, it will not work. For this we need `_version vectors_`.
 
 ### Leaderless replication
 
@@ -1125,14 +1150,14 @@ Each write from a client is sent to all replicas, regardless of datacenter, but 
 In order to become eventually consistent, the replicas should converge toward the same value. If you want to avoid losing data, you application developer, need to know a lot about the internals of your database's conflict handling.
 
 - **Last write wins (discarding concurrent writes).** Even though the writes don' have a natural ordering, we can force an arbitrary order on them. We can attach a timestamp to each write and pick the most recent. There are some situations such caching on which lost writes are acceptable. If losing data is not acceptable, LWW is a poor choice for conflict resolution.
-- **The "happens-before" relationship and concurrency.** Whether one operation happens before another operation is the key to defining what concurrency means. **We can simply say that to operations are _concurrent_ if neither happens before the other.** Either A happened before B, or B happened before A, or A and B are concurrent.
+- **The "happens-before" relationship and concurrency.** Whether one operation happens before another operation is the key to defining what concurrency means. **We can simply say that two operations are _concurrent_ if neither happens before the other.** Either A happened before B, or B happened before A, or A and B are concurrent.
 
 ##### Capturing the happens-before relationship
 
 The server can determine whether two operations are concurrent by looking at the version numbers.
 
 - The server maintains a version number for every key, increments the version number every time that key is written, and stores the new version number along the value written.
-- Client reads a key, the server returns all values that have not been overwrite, as well as the latest version number. A client must read a key before writing.
+- Client reads a key, the server returns all values that have not been overwriteen, as well as the latest version number. A client must read a key before writing.
 - Client writes a key, it must include the version number from the prior read, and it must merge together all values that it received in the prior read.
 - Server receives a write with a particular version number, it can overwrite all values with that version number or below, but it must keep all values with a higher version number.
 
@@ -1140,11 +1165,13 @@ The server can determine whether two operations are concurrent by looking at the
 
 No data is silently dropped. It requires clients do some extra work, they have to clean up afterward by merging the concurrently written values. Riak calls these concurrent values _siblings_.
 
-Merging sibling values is the same problem as conflict resolution in multi-leader replication. A simple approach is to just pick one of the values on a version number or timestamp (last write wins). You may need to do something more intelligent in application code to avoid losing data.
+Merging sibling values is the same problem as conflict resolution in multi-leader replication. A simple approach is to just pick one of the values based on a version number or timestamp (last write wins). You may need to do something more intelligent in application code to avoid losing data.
 
 If you want to allow people to _remove_ things, union of siblings may not yield the right result. An item cannot simply be deleted from the database when it is removed, the system must leave a marker with an appropriate version number to indicate that the item has been removed when merging siblings (_tombstone_).
 
 Merging siblings in application code is complex and error-prone, there are efforts to design data structures that can perform this merging automatically (CRDTs).
+
+utkarsh https://www.youtube.com/watch?v=M8-WFTjZoA0
 
 #### Version vectors
 
@@ -1198,13 +1225,15 @@ Splitting writes across different keys, makes reads now to do some extra work an
 
 ### Partitioning and secondary indexes
 
+utkarsh https://www.youtube.com/watch?v=Ua08uVgsk4k
+
 The situation gets more complicated if secondary indexes are involved. A secondary index usually doesn't identify the record uniquely. They don't map neatly to partitions.
 
 #### Partitioning secondary indexes by document
 
-Each partition maintains its secondary indexes, covering only the documents in that partition (_local index_).
+Each partition maintains its secondary indexes, covering only the documents in that partition (_local partition index_).
 
-You need to send the query to _all_ partitions, and combine all the results you get back (_scatter/gather_). This is prone to tail latency amplification and is widely used in MongoDB, Riak, Cassandra, Elasticsearch, SolrCloud and VoltDB.
+You need to send the query to _all_ partitions, and combine all the results you get back (_scatter/gather_ approach). This is prone to tail latency amplification and is widely used in MongoDB, Riak, Cassandra, Elasticsearch, SolrCloud and VoltDB.
 
 #### Partitioning secondary indexes by term
 
@@ -1233,6 +1262,8 @@ Fully automated rebalancing may seem convenient but the process can overload the
 
 It can be good to have a human in the loop for rebalancing. You may avoid operational surprises.
 
+utkarsh https://www.youtube.com/watch?v=YvRm6HVEJEE
+
 ### Request routing
 
 This problem is also called _service discovery_. There are different approaches:
@@ -1250,6 +1281,51 @@ Many distributed data systems rely on a separate coordination service such as Zo
 _Massively parallel processing_ (MPP) relational database products are much more sophisticated in the types of queries they support.
 
 ## Transactions
+
+## start of summary utkarsh
+
+Why transactions?
+In a schedule(parallel transactions), everything goes good until 2 or more transactions acquiring lock on same data with 2 or more as write operations. The actual problem is the interaction of 1 transaction with other making it read a value which is no commited till now (`Dirty read`). For this we need certain techniques or protocols to make schedules conflict-serializable. Techniques are as follows :
+
+1. Time Stamp protocol
+2. 2Phase Locking (Basic, conservative, rigrous and strict)
+3. Graph based protocol (Tree Based protocol)
+4. Multi version concurrency control
+5. Validation concurrency control
+
+In summary down below we have dicussed 2PL and graph based.
+
+In 2PL we have 4 ways, which tackle each problem separately out of which we have deadlock (tacked by conversative) , irrecovorability and cascadelessness (tackled by rigrous) and efficiency of improvement made over rigrous (by unlocking the read locks and not waiting for them to commit) by strict.
+
+`utkarsh Summary of deadlocks`
+
+Deadlocks happen when these 4 conditions become true :
+
+1. Mutual Exclusion : Only 1 is allowed to access at a time.
+2. Hold and wait : If we wait to acquire next resource while holding other resources
+3. No Premption : If a process does not snatch the resources holded by other process , deadlock may occur.
+4. Circular wait : If a process wait in circlar fashion for resources.
+
+How to Tackle deadlock ?
+
+1. Prevention : do not let it happen and ways are as follows:
+
+1.1 Nullify hold and wait property by making transaction acquire all the locks at the start of transactions, same as in conservative 2PL. Which is in-efficeint as we are locking all the resources at start.
+
+1.2 Nullify circular wait option by defining the number to resources and acquiring locks in the increasing order of those numbers. Hence for all transaction A will be acquired before B. same as in TreeBasedProtocol, but this is impractical to predict which item will be used during transaction execution.
+
+2. Detection and recovery : detect and resolve
+
+`Deadlock Detection`
+2.1 Single Instance of resources : Directed Acuclic graph is used to detect the dealock if the cycle exits then there is deadlock.
+2.2 Multiple instance of resources : Bankers algo is used.
+
+`Recovery Techniques`
+
+2.1 Killing the proces
+2.2 Resource Preemption
+
+## end of summary utkarsh
 
 Implementing fault-tolerant mechanisms is a lot of work.
 
@@ -1421,7 +1497,7 @@ This is the strongest isolation level. It guarantees that even though transactio
 There are three techniques for achieving this:
 
 - Executing transactions in serial order
-- Two-phase locking
+- Two-phase locking (Basic, conservative, strict, rigourous)
 - Serializable snapshot isolation.
 
 #### Actual serial execution
@@ -1463,6 +1539,37 @@ Blocking readers and writers is implemented by a having lock on each object in t
 - If a transaction wants to write to an object, it must first acquire the lock in exclusive mode.
 - If a transaction first reads and then writes an object, it may upgrade its shared lock to an exclusive lock.
 - After a transaction has acquired the lock, it must continue to hold the lock until the end of the transaction (commit or abort). **First phase is when the locks are acquired, second phase is when all the locks are released.**
+
+## start of summary utkarsh
+
+`2PL protocol`
+
+> utkarsh Summary of 2PL : Generally when we use 2PL, we use strict PL , which is more efficient version of rigrous 2PL. To understand this , we have 2 lock types read and write (shared and exclusive). On same data item, shared(read) locks can be applied, but single exclisive(write) locks can be applied on data which so ever applies first.
+> Each 2PL type : basic, conservative , rigrous and strict except basic is designed to solve particular problem. Basic introduced problem like deadlock , irrecoverability and cascadelessness.
+> Conversative solved the issue of deadlock by acquiring lock on all the data which was to be written/changed but here we have to keep track of future as a transaction may not know which data to lock, at start of its execution.
+> Rigrous solved the issue of deadlock by no shrinking phase but only commiting which will also release lock at that point, making transaction in-efficient due to commit.
+> Strict made rigrrous more efficient by commiting only the exlusive(write) lock and unlock the read lock. So this is partial shrinking phase.
+
+Rigrous vs strict
+
+> Rigrous 2PL is there will be growing phase (In growing phase only locks are acquired and non unlocks are done) and there will be no shrinking phase (unlocking of locks). Instead of no shrinking phase, commits will happen which will automatically unlock the lock from that data. So in rigrous 2PL we never talking aboyt types of locks i.e read and write locks unlocking. So in strict 2PL, there will be partial unlocking (commiting for writes and unlocking for read).
+
+Strcit 2PL is a great improvment as most transactions on internet are read-only.
+
+`Graph Based protocol`
+
+`TreebasedProtocol`
+
+2PL was 1 protocol to make schedules conflict serializable, but there are other ways too, like graph based which will require extra information before hand (similar to banker algo for deadlock avoidance). Here we have certain rules lets say we have ordering of data in which they will be accessed. a->b->c
+
+1. At begin any node can be locked
+2. To lock any node further, we need its parent to be locked. So here we we need to lock c, we need to lock b first.
+
+3. We can release any lock when ever we want
+
+Deadlock will not happen as we have predefined order of nodes to be acccessed. But as we are not commiting the written values chnages of dirty read are there hence irrecoverability and cascadelessness. But we can implement it same as 2PL.
+
+## end of utkarsh summary
 
 It can happen that transaction A is stuck waiting for transaction B to release its lock, and vice versa (_deadlock_).
 
