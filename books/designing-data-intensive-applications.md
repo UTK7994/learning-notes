@@ -1297,7 +1297,7 @@ In summary down below we have dicussed 2PL and graph based.
 
 In 2PL we have 4 ways, which tackle each problem separately out of which we have deadlock (tacked by conversative) , irrecovorability and cascadelessness (tackled by rigrous) and efficiency of improvement made over rigrous (by unlocking the read locks and not waiting for them to commit) by strict.
 
-`utkarsh Summary of deadlocks`
+## `utkarsh Summary of deadlocks`
 
 Deadlocks happen when these 4 conditions become true :
 
@@ -1354,6 +1354,32 @@ In datastores with leaderless replication is the application's responsibility to
 
 The whole point of aborts is to enable safe retries.
 
+## Summary on concurrency problems in Transactions
+
+Let 1 and 2 denote 2 transactions and R1 and R2 are 2 reads and W1 and W2 are 2 writes of those Tramsactions respectively and C commit.
+
+Problems in Concurrency :
+
+1. Dirty Read : R1 W1 R2 C2 C1 (R2 will read committed value)
+2. Unrepeatable reads : R1 R2 W1 R2 (both R2 will read diff value)
+3. Phantom reads : R1 R2 Delete1 R2 (R2 is not null first but otherwise afterwards)
+4. Lost Update reads : R1 R2 W1 W2 (W2 is blind write)
+
+Certain Isolation Levels are created to tackle the same problem.
+
+Based on these phenomena, The SQL standard defines four isolation levels :
+
+https://sqlperformance.com/wp-content/uploads/2015/04/image.png
+
+**Read Uncommitted** – Read Uncommitted is the lowest isolation level. In this level, one transaction may read not yet committed changes made by other transaction, thereby allowing dirty reads. In this level, transactions are not isolated from each other.
+**Read Committed** – This isolation level guarantees that any data read is committed at the moment it is read. Thus it does `not allows dirty read`. The transaction holds a read or write lock on the current row, and thus prevent other transactions from reading, updating or deleting it.
+**Snapshot Isolation** - is a guarantee that all reads made in a transaction will see a consistent snapshot of the database (in practice it reads the last committed values that existed at the time it started). All 4 concurrency problems are solved here as we consider only commited values (snapshots).
+**Repeatable Read** – This is the most restrictive isolation level. The transaction holds read locks on all rows it references and writes locks on all rows it inserts, updates, or deletes. Since other transaction cannot read, update or delete these rows, consequently it avoids non-repeatable read. But a new Tramsaction T2 unkown of other transaction T1, inserts a new row involving condition mentioned in previous Transacrion T1 can be inserted creating `Phantom reads`.
+**Serializable** – This is the Highest isolation level. A serializable execution is guaranteed to be serializable. Serializable execution is defined to be an execution of operations in which concurrently executing transactions appears to be serially executing.
+All 4 concurrency problems are solved here as there is no conucrrency here. eg strict 2PL.
+
+## End of utkarsh Summary
+
 ### Weak isolation levels
 
 Concurrency issues (race conditions) come into play when one transaction reads data that is concurrently modified by another transaction, or when two transactions try to simultaneously modify the same data.
@@ -1376,6 +1402,12 @@ Most databases prevent dirty writes by using row-level locks that hold the lock 
 On dirty reads, requiring read locks does not work well in practice as one long-running write transaction can force many read-only transactions to wait. For every object that is written, the database remembers both the old committed value and the new value set by the transaction that currently holds the write lock. While the transaction is ongoing, any other transactions that read the object are simply given the old value.
 
 #### Snapshot isolation and repeatable read
+
+`Snapshot isolation vs repeatable read`
+
+`"Snapshot" guarantees that all queries within the transaction will see the data as it was at the start of the transaction.
+
+"Repeatable read" guarantees only that if multiple queries within the transaction read the same rows, then they will see the same data each time. (So, different rows might get snapshotted at different times, depending on when the transaction first retrieves them. And if new rows are inserted, a later query might detect them.)`
 
 There are still plenty of ways in which you can have concurrency bugs when using this isolation level.
 
@@ -1433,7 +1465,7 @@ UPDATE wiki_pages SET content = 'new content'
 
 ##### Conflict resolution and replication
 
-With multi-leader or leaderless replication, compare-and-set do not apply.
+With multi-leader or leaderless replication, **compare-and-set do not apply.**
 
 A common approach in replicated databases is to allow concurrent writes to create several conflicting versions of a value (also know as _siblings_), and to use application code or special data structures to resolve and merge these versions after the fact.
 
@@ -1467,12 +1499,12 @@ Imagine Alice and Bob are two on-call doctors for a particular shift. Imagine bo
 
 Since database is using snapshot isolation, both checks return 2. Both transactions commit, and now no doctor is on call. The requirement of having at least one doctor has been violated.
 
-Write skew can occur if two transactions read the same objects, and then update some of those objects. You get a dirty write or lost update anomaly.
+Write skew can occur if two transactions read the same objects, and then update some of those objects. You get a `dirty write or lost update anomaly`.
 
 Ways to prevent write skew are a bit more restricted:
 
 - Atomic operations don't help as things involve more objects.
-- Automatically prevent write skew requires true serializable isolation.
+- Automatically prevent write skew requires true `serializable isolation.`
 - The second-best option in this case is probably to explicitly lock the rows that the transaction depends on.
 
   ```sql
@@ -1496,7 +1528,7 @@ This is the strongest isolation level. It guarantees that even though transactio
 
 There are three techniques for achieving this:
 
-- Executing transactions in serial order
+- Executing transactions in serial order (no concurrency)
 - Two-phase locking (Basic, conservative, strict, rigourous)
 - Serializable snapshot isolation.
 
@@ -1514,6 +1546,8 @@ There are a few pros and cons for stored procedures:
 
 - Each database vendor has its own language for stored procedures. They usually look quite ugly and archaic from today's point of view, and they lack the ecosystem of libraries.
 - It's harder to debug, more awkward to keep in version control and deploy, trickier to test, and difficult to integrate with monitoring.
+
+https://www.geeksforgeeks.org/advantages-and-disadvantages-of-using-stored-procedures-sql/
 
 Modern implementations of stored procedures include general-purpose programming languages instead: VoltDB uses Java or Groovy, Datomic uses Java or Clojure, and Redis uses Lua.
 
@@ -1571,7 +1605,7 @@ Deadlock will not happen as we have predefined order of nodes to be acccessed. B
 
 ## end of utkarsh summary
 
-It can happen that transaction A is stuck waiting for transaction B to release its lock, and vice versa (_deadlock_).
+It can happen that transaction A is stuck waiting for transaction B to release its lock, and vice versa (_deadlock_), but deadlock is rare scenario and can be ignored. When detected can be recovered.
 
 **The performance for transaction throughput and response time of queries are significantly worse under two-phase locking than under weak isolation.**
 
