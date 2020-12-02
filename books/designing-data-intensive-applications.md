@@ -1377,6 +1377,7 @@ https://sqlperformance.com/wp-content/uploads/2015/04/image.png
 **Repeatable Read** – This is the most restrictive isolation level. The transaction holds read locks on all rows it references and writes locks on all rows it inserts, updates, or deletes. Since other transaction cannot read, update or delete these rows, consequently it avoids non-repeatable read. But a new Tramsaction T2 unkown of other transaction T1, inserts a new row involving condition mentioned in previous Transacrion T1 can be inserted creating `Phantom reads`.
 **Serializable** – This is the Highest isolation level. A serializable execution is guaranteed to be serializable. Serializable execution is defined to be an execution of operations in which concurrently executing transactions appears to be serially executing.
 All 4 concurrency problems are solved here as there is no conucrrency here. eg strict 2PL.
+**Serializable snapshot isolation (SSI)** - It provides full serializability and has a small performance penalty compared to snapshot isolation. SSI is fairly new and might become the new default in the future.
 
 ## End of utkarsh Summary
 
@@ -1569,7 +1570,7 @@ Writers don't just block other writers; they also block readers and vice versa. 
 
 Blocking readers and writers is implemented by a having lock on each object in the database. The lock is used as follows:
 
-- if a transaction want sot read an object, it must first acquire a lock in shared mode.
+- if a transaction wants to read an object, it must first acquire a lock in shared mode.
 - If a transaction wants to write to an object, it must first acquire the lock in exclusive mode.
 - If a transaction first reads and then writes an object, it may upgrade its shared lock to an exclusive lock.
 - After a transaction has acquired the lock, it must continue to hold the lock until the end of the transaction (commit or abort). **First phase is when the locks are acquired, second phase is when all the locks are released.**
@@ -1607,7 +1608,7 @@ Deadlock will not happen as we have predefined order of nodes to be acccessed. B
 
 It can happen that transaction A is stuck waiting for transaction B to release its lock, and vice versa (_deadlock_), but deadlock is rare scenario and can be ignored. When detected can be recovered.
 
-**The performance for transaction throughput and response time of queries are significantly worse under two-phase locking than under weak isolation.**
+**The performance for transaction throughput and response time of queries are significantly worse under two-phase locking (Isolation level : Serializable) than under weak isolation.**
 
 A transaction may have to wait for several others to complete before it can do anything.
 
@@ -1619,7 +1620,7 @@ With _phantoms_, one transaction may change the results of another transaction's
 
 In order to prevent phantoms, we need a _predicate lock_. Rather than a lock belonging to a particular object, it belongs to all objects that match some search condition.
 
-Predicate locks applies even to objects that do not yet exist in the database, but which might be added in the future (phantoms).
+Predicate locks applies even to objects that do not yet exist in the database, but which might be added in the future (phantoms). precisely, when we lock the records which belong to search query, and perform operations (Isolation level : Repeatable read)
 
 ##### Index-range locks
 
@@ -1639,7 +1640,7 @@ Two-phase locking is called _pessimistic_ concurrency control because if anythin
 
 Serial execution is also _pessimistic_ as is equivalent to each transaction having an exclusive lock on the entire database.
 
-Serializable snapshot isolation is _optimistic_ concurrency control technique. Instead of blocking if something potentially dangerous happens, transactions continue anyway, in the hope that everything will turn out all right. The database is responsible for checking whether anything bad happened. If so, the transaction is aborted and has to be retried.
+Serializable snapshot isolation (SSI), is _optimistic_ concurrency control technique. Instead of blocking if something potentially dangerous happens, transactions continue anyway, in the hope that everything will turn out all right. The database is responsible for checking whether anything bad happened. If so, the transaction is aborted and has to be retried.
 
 If there is enough spare capacity, and if contention between transactions is not too high, optimistic concurrency control techniques tend to perform better than pessimistic ones.
 
@@ -1647,7 +1648,7 @@ SSI is based on snapshot isolation, reads within a transaction are made from a c
 
 The database knows which transactions may have acted on an outdated premise and need to be aborted by:
 
-- **Detecting reads of a stale MVCC object version.** The database needs to track when a transaction ignores another transaction's writes due to MVCC visibility rules. When a transaction wants to commit, the database checks whether any of the ignored writes have now been committed. If so, the transaction must be aborted.
+- **Detecting reads of a stale _multi-version concurrency control_ object version.** The database needs to track when a transaction ignores another transaction's writes due to MVCC visibility rules. When a transaction wants to commit, the database checks whether any of the ignored writes have now been committed. If so, the transaction must be aborted.
 - **Detecting writes that affect prior reads.** As with two-phase locking, SSI uses index-range locks except that it does not block other transactions. When a transaction writes to the database, it must look in the indexes for any other transactions that have recently read the affected data. It simply notifies the transactions that the data they read may no longer be up to date.
 
 ##### Performance of serializable snapshot isolation
@@ -1664,7 +1665,7 @@ The rate of aborts significantly affects the overall performance of SSI. SSI req
 
 A program on a single computer either works or it doesn't. There is no reason why software should be flaky (non deterministic).
 
-In a distributed systems we have no choice but to confront the messy reality of the physical world. There will be parts that are broken in an unpredictable way, while others work. Partial failures are _nondeterministic_. Things will unpredicably fail.
+In a distributed systems we have no choice but to confront the messy reality of the physical world. There will be parts that are broken in an unpredictable way, while others work. Partial failures are _nondeterministic_. Things will unpredicably fail. Network is major cause of unreliability.
 
 We need to accept the possibility of partial failure and build fault-tolerant mechanism into the software. **We need to build a reliable system from unreliable components.**
 
@@ -1695,7 +1696,7 @@ If something has gone wrong, you have to assume that you will get no response at
 
 A long timeout means a long wait until a node is declared dead. A short timeout detects faults faster, but carries a higher risk of incorrectly declaring a node dead (when it could be a slowdown).
 
-Premature declaring a node is problematic, if the node is actually alive the action may end up being performed twice.
+Premature declaring a node dead is problematic, if the node is actually alive the action may end up being performed twice.
 
 When a node is declared dead, its responsibilities need to be transferred to other nodes, which places additional load on other nodes and the network.
 
@@ -1706,9 +1707,29 @@ When a node is declared dead, its responsibilities need to be transferred to oth
 - In virtual environments, the operative system is often paused while another virtual machine uses a CPU core. The VM queues the incoming data.
 - TCP performs _flow control_, in which a node limits its own rate of sending in order to avoid overloading a network link or the receiving node. This means additional queuing at the sender.
 
-You can choose timeouts experimentally by measuring the distribution of network round-trip times over an extended period.
+utkarsh TCP flow controls
+1. Window Size (Stop and wait) : https://www.youtube.com/watch?v=4l2_BCr-bhw
+2. Sliding Window : https://www.youtube.com/watch?v=klDhO9N01c4
+3. Detailed flow control : https://www.youtube.com/watch?v=vHrvhqHvwW8
+
+Sliding windows flow control approach is Bandwith Times efficient compared to Fized Window Side (Stop and wait approach).
+
+ If sender packet fails before reaching receiver data is resend after waiting for some time also known as Stop and wait with Time out (Automatic Repeat reQuest)
+ If receiver packet fails before sending back ACK, data will again be resend but as we have already send the data to receiver, a sequence number will be maintained so that receiver will know that data is re-received due to the ack becak to sender failed.
+
+You can choose timeouts experimentally by measuring the distribution of network round-trip times over an extended period. [Telemetry logging]
 
 Systems can continually measure response times and their variability (_jitter_), and automatically adjust timeouts according to the observed response time distribution.
+
+`Give a reading to TCP and UDP transport protocol`
+
+**Netflix uses TCP**
+
+utkarsh https://www.youtube.com/playlist?list=PLBGx66SQNZ8ZvdIoctCTWB3ApXQpQGEin
+
+Few network models :
+1. OSI model
+2. TCP/IP model
 
 #### Synchronous vs ashynchronous networks
 
@@ -1716,11 +1737,13 @@ A telephone network estabilishes a _circuit_, we say is _synchronous_ even as th
 
 A circuit is a fixed amount of reserved bandwidth which nobody else can use while the circuit is established, whereas packets of a TCP connection opportunistically use whatever network bandwidth is available.
 
-**Using circuits for bursty data transfers wastes network capacity and makes transfer unnecessary slow. By contrast, TCP dinamycally adapts the rate of data transfer to the available network capacity.**
+**Using circuits for bursty data transfers wastes network capacity and makes transfer unnecessary slow. By contrast, TCP dynamically adapts the rate of data transfer to the available network capacity.**
 
 We have to assume that network congestion, queueing, and unbounded delays will happen. Consequently, there's no "correct" value for timeouts, they need to be determined experimentally.
 
 ### Unreliable clocks
+
+https://www.geeksforgeeks.org/java-system-nanotime-vs-system-currenttimemillis/
 
 The time when a message is received is always later than the time when it is sent, we don't know how much later due to network delays. This makes difficult to determine the order of which things happened when multiple machines are involved.
 
@@ -1732,6 +1755,36 @@ Each machine on the network has its own clock, slightly faster or slower than th
 If some piece of sofware is relying on an accurately synchronised clock, the result is more likely to be silent and subtle data loss than a dramatic crash.
 
 You need to carefully monitor the clock offsets between all the machines.
+
+
+## summary on clock synchronization utkarsh
+
+https://www.youtube.com/watch?v=M8eudxvioGM
+
+Clock Synchronization
+1. Physical clock
+  1.1) Master-slave conf -> chritians(client to serve) and berkley(server to client)
+  1.2) Decentralized statrum approach : NTP which eventually sync all clinets
+2. Logical clock
+  2.1) Lamport logical clock algo
+  2.2) Vector clock algo
+3. Mutual exclusion algo
+  3.1) Token based
+  3.2) non-token based
+4. Election Algo
+  4.1) Bully algorithm
+  4.2) Ring algorithm
+
+More accurate is GOS clock sync
+Also see : Who Gps work : https://www.youtube.com/watch?v=wCcARVbL_Dk
+1) 2d Trilateration ; min 3 circles are needed together to get exact positiom
+2) 3d Trilateration ; min 4 spheres are needed together to get exact position
+
+utkarsh https://www.youtube.com/watch?v=l8CI3bs9rvY
+Atomic clocks are based on caeium 133 which is used by gps.
+Corrections on gps are made as time moves faster when away from gravity so sateelites have time diff of 6 ms, which makes the location inaccurate when measured.
+
+## End of summary utkarsh
 
 #### Timestamps for ordering events
 
@@ -1745,7 +1798,7 @@ _Logical clocks_, based on counters instead of oscillating quartz crystal, are s
 
 It doesn't make sense to think of a clock reading as a point in time, it is more like a range of times, within a confidence internval: for example, 95% confident that the time now is between 10.3 and 10.5.
 
-The most common implementation of snapshot isolation requires a monotonically increasing transaction ID.
+The most common implementation of snapshot isolation requires a monotonically increasing transaction ID. [lamports clock]
 
 Spanner implements snapshot isolation across datacenters by using clock's confidence interval. If you have two confidence internvals where
 
@@ -1758,13 +1811,13 @@ And those two intervals do not overlap (`A earliest` < `A latest` < `B earliest`
 
 Spanner deliberately waits for the length of the confidence interval before commiting a read-write transaction, so their confidence intervals do not overlap.
 
-Spanner needs to keep the clock uncertainty as small as possible, that's why Google deploys a GPS receiver or atomic clock in each datacenter.
+Spanner needs to keep the clock uncertainty as small as possible, that's why Google deploys a GPS receiver or atomic clock in each datacenter which is very very precise.
 
 #### Process pauses
 
 How does a node know that it is still leader?
 
-One option is for the leader to obtain a _lease_ from other nodes (similar ot a lock with a timeout). It will be the leader until the lease expires; to remain leader, the node must periodically renew the lease. If the node fails, another node can takeover when it expires.
+One option is for the leader to obtain a _lease_ from other nodes (similar to a lock with a timeout). It will be the leader until the lease expires; to remain leader, the node must periodically renew the lease. If the node fails, another node can takeover when it expires. (Good idea !!)
 
 We have to be very careful making assumptions about the time that has passed for processing requests (and holding the lease), as there are many reasons a process would be paused:
 
@@ -1796,13 +1849,21 @@ Commonly, the quorum is an absolute majority of more than half of the nodes.
 
 #### Fencing tokens
 
-Assume every time the lock server grant sa lock or a lease, it also returns a _fencing token_, which is a number that increases every time a lock is granted (incremented by the lock service). Then we can require every time a client sends a write request to the storage service, it must include its current fencing token.
+Assume every time the lock server grants a lock or a lease, it also returns a _fencing token_, which is a number that increases every time a lock is granted (incremented by the lock service). Then we can require every time a client sends a write request to the storage service, it must include its current fencing token.
 
 The storage server remembers that it has already processed a write with a higher token number, so it rejects the request with the last token.
 
-If ZooKeeper is used as lock service, the transaciton ID `zcid` or the node version `cversion` can be used as a fencing token.
+If ZooKeeper is used as lock service, the transaciton ID `zcid` (logical clock which is used to order the event) or the node version `cversion` can be used as a fencing token.
 
 #### Byzantine faults
+
+utkarsh videos
+https://www.youtube.com/watch?v=VWG9xcwjxUg
+https://www.youtube.com/watch?v=3EUAcxhuoU4
+https://www.youtube.com/watch?v=psKDXvXdr7k
+https://www.youtube.com/watch?v=ZgZzuqQFeuk
+
+important playlist : https://www.youtube.com/playlist?list=PLOE1GTZ5ouRPbpTnrZ3Wqjamfwn_Q5Y9A
 
 Fencing tokens can detect and block a node that is _inadvertently_ acting in error.
 
@@ -1827,7 +1888,7 @@ With weak guarantees, you need to be constantly aware of its limitations. System
 
 ### Linearizability
 
-Make a system appear as if there were only one copy of the data, and all operaitons on it are atomic.
+Make a system appear as if there were only one copy of the data, and all operations on it are atomic.
 
 - `read(x) => v` Read from register _x_, database returns value _v_.
 - `write(x,v) => r` _r_ could be _ok_ or _error_.
@@ -1838,7 +1899,7 @@ If one client read returns the new value, all subsequent reads must also return 
 
 **Serializability**: Transactions behave the same as if they had executed _some_ serial order.
 
-**Linearizability**: Recency guarantee on reads and writes of a register (individual object).
+**Linearizability**: Recenct guarantee on reads and writes of a register (individual object).
 
 #### Locking and leader election
 
@@ -1861,7 +1922,7 @@ The simplest approach would be to have a single copy of the data, but this would
 - Multi-leader replication is not linearizable.
 - Leaderless replication is probably not linearizable.
 
-Multi-leader replication is often a good choice for multi-datacenter replication. On a network interruption betwen data-centers will force a choice between linearizability and availability.
+**Multi-leader replication is often a good choice for multi-datacenter replication. On a network interruption betwen data-centers will force a choice between linearizability and availability.**
 
 With multi-leader configuraiton, each data center can operate normally with interruptions.
 
@@ -1869,7 +1930,7 @@ With single-leader replication, the leader must be in one of the datacenters. If
 
 - If your applicaiton _requires_ linearizability, and some replicas are disconnected from the other replicas due to a network problem, the some replicas cannot process request while they are disconnected (unavailable).
 
-- If your application _does not require_, then it can be written in a way tha each replica can process requests independently, even if it is disconnected from other replicas (peg: multi-leader), becoming _available_.
+- If your application _does not require_ linearizability, then it can be written in a way tha each replica can process requests independently, even if it is disconnected from other replicas (eg: multi-leader), becoming _available_.
 
 **If an application does not require linearizability it can be more tolerant of network problems.**
 
@@ -1881,7 +1942,7 @@ CAP only considers one consistency model (linearizability) and one kind of fault
 
 ---
 
-The main reason for dropping linearizability is _performance_, not fault tolerance. Linearizabilit is slow and this is true all the time, not on only during a network fault.
+The main reason for dropping linearizability is _performance_, not fault tolerance. Linearizability is slow and this is true all the time, not only during a network fault.
 
 ### Ordering guarantees
 
