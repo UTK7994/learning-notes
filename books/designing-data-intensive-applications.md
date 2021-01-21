@@ -1876,6 +1876,12 @@ A system is _Byzantine fault-tolerant_ if it continues to operate correctly even
 
 ## Consistency and consensus
 
+
+utkarsh 2pc and 3PC
+https://www.youtube.com/watch?v=S4FnmSeRpAY
+https://developers.redhat.com/blog/wp-content/uploads/2018/09/Untitled-UML-6.png
+
+
 The simplest way of handling faults is to simply let the entire service fail. We need to find ways of _tolerating_ faults.
 
 ### Consistency guarantees
@@ -1899,13 +1905,27 @@ If one client read returns the new value, all subsequent reads must also return 
 
 **Serializability**: Transactions behave the same as if they had executed _some_ serial order.
 
-**Linearizability**: Recenct guarantee on reads and writes of a register (individual object).
+**Linearizability**: Recent guarantee on reads and writes of a register (individual object). Read the committed data.
 
 #### Locking and leader election
 
 To ensure that there is indeed only one leader, a lock is used. It must be linearizable: all nodes must agree which nodes owns the lock; otherwise is useless.
 
 Apache ZooKeepr and etcd are often used for distributed locks and leader election.
+
+utkarsh summary zookeeper start
+
+In order to achieve high read-availability, Zookeeper guarantees a weak-consistency over the replicates: a read can always be answered by a client node, and the answer returned may be a stale value (even a new version has been committed through the leader).
+
+Then it is the users' responsibility to decide whether the answer for a read is "stale-able" or not, since not all applications require the up-to-date information. So the following choices are provided:
+
+1) If your application does not need up-to-date values for reads, you can get high read-availability by requesting data directly from the client.
+
+2) If your application requires up-to-date values for reads, you should use the "sync" API before your read request to sync the client-side version with the leader.
+
+So as a conclusion, Zookeeper provides a customizable consistency guarantee, and users can decide the balance between availability and consistency.
+
+utkarsh summary zookeeper end
 
 #### Constraints and uniqueness guarantees
 
@@ -1924,7 +1944,7 @@ The simplest approach would be to have a single copy of the data, but this would
 
 **Multi-leader replication is often a good choice for multi-datacenter replication. On a network interruption betwen data-centers will force a choice between linearizability and availability.**
 
-With multi-leader configuraiton, each data center can operate normally with interruptions.
+With multi-leader configuration, each data center can operate normally with interruptions.
 
 With single-leader replication, the leader must be in one of the datacenters. If the application requires linearizable reads and writes, the network interruption causes the application to become unavailable.
 
@@ -1948,7 +1968,7 @@ The main reason for dropping linearizability is _performance_, not fault toleran
 
 Cause comes before the effect. Causal order in the system is what happened before what (_causally consistent_).
 
-_Total order_ allows any two elements to be compared. Peg, natural numbers are totally ordered.
+_Total order_ allows any two elements to be compared. eg, natural numbers are totally ordered.
 
 Some cases one set is greater than another one.
 
@@ -1962,6 +1982,10 @@ Linearizability is not the only way of preserving causality. **Causal consistenc
 You need to know which operation _happened before_.
 
 In order to determine the causal ordering, the database needs to know which version of the data was read by the application. **The version number from the prior operation is passed back to the database on a write.**
+
+utkarsh summary for Causality start
+https://www.youtube.com/watch?v=lzn6AUBHmxw
+utkarsh summary for Causality end
 
 We can create sequence numbers in a total order that is _consistent with causality_.
 
@@ -1983,7 +2007,7 @@ Every node and every client keeps track of the _maximum_ counter value it has se
 
 As long as the maximum counter value is carried along with every operation, this scheme ensure that the ordering from the lamport timestamp is consistent with causality.
 
-Total order of oepration only emerges after you have collected all of the operations.
+Total order of operation only emerges after you have collected all of the operations.
 
 Total order broadcast:
 
@@ -2000,7 +2024,7 @@ Another way of looking at total order broadcast is that it is a way of creating 
 
 If you have total order broadcast, you can build linearizable storage on top of it.
 
-Because log entries are delivered to all nodes in the same order, if therer are several concurrent writes, all nodes will agree on which one came first. Choosing the first of the conflicting writes as the winner and aborting later ones ensures that all nodes agree on whether a write was commited or aborted.
+Because log entries are delivered to all nodes in the same order, if there are several concurrent writes, all nodes will agree on which one came first. Choosing the first of the conflicting writes as the winner and aborting later ones ensures that all nodes agree on whether a write was commited or aborted.
 
 This procedure ensures linearizable writes, it doesn't guarantee linearizable reads.
 
@@ -2168,7 +2192,7 @@ Running a MapReduce job normally does not modify the input and does not have any
 
 While Unix tools use `stdin` and `stdout` as input and output, MapReduce jobs read and write files on a distributed filesystem. In Hadoop, that filesystem is called HDFS (Haddoop Distributed File System).
 
-HDFS is based on the _shared-nothing_ principe. Implemented by centralised storage appliance, often using custom hardware and special network infrastructure.
+`HDFS is based on the _shared-nothing_ principe. Implemented by centralised storage appliance, often using custom hardware and special network infrastructure.`
 
 HDFS consists of a daemon process running on each machine, exposing a network service that allows other nodes to access files stored on that machine. A central server called the _NameNode_ keeps track of which file blocks are stored on which machine.
 
@@ -2182,19 +2206,19 @@ MapReduce is a programming framework with which you can write code to process la
 4. Call the reducer function to iterate over the sorted key-value pairs.
 
 - Mapper: Called once for every input record, and its job is to extract the key and value from the input record.
-- Reducer: Takes the key-value pairs produced by the mappers, collects all the values belonging to the same key, and calls the reducer with an interator over that collection of vaues.
+- Reducer: Takes the key-value pairs produced by the mappers, collects all the values belonging to the same key, and calls the reducer with an interator over that collection of values.
 
 MapReduce can parallelise a computation across many machines, without you having ot write code to explicitly handle the parallelism. THe mapper and reducer only operate on one record at a time; they don't need to know where their input is coming from or their output is going to.
 
 In Hadoop MapReduce, the mapper and reducer are each a Java class that implements a particular interface.
 
-The MapReduce scheduler tries to run each mapper on one of the machines that stores a replica of the input file, _putting the computation near the data_.
+The MapReduce scheduler tries to run each mapper on one of the machines that stores a replica of the input file, **_putting the computation near the data_.**
 
 The reduce side of the computation is also partitioned. While the number of map tasks is determined by the number of input file blocks, the number of reduce tasks is configured by the job author. To ensure that all key-value pairs with the same key end up in the same reducer, the framework uses a hash of the key.
 
-The dataset is likely too large to be sorted with a conventional sorting algorithm on a single machine. Sorting is performed in stages.
+The dataset is likely too large to be sorted with a conventional sorting algorithm on a single machine. Sorting is performed in stages. [Similarly to batch sort and then merge sort - External sort]
 
-Whenever a mapper finishes reading its input file and writing its sorted output files, the MapReduce scheduler notifies the reducers that they can start fetching the output files from that mapper. The reducers connect to each of the mappers and download the files of sorted key-value pairs for their partition. Partitioning by reducer, sorting and copying data partitions from mappers to reducers is called _shuffle_.
+Whenever a mapper finishes reading its input file and writing its sorted output files, the MapReduce scheduler notifies the reducers that they can start fetching the output files from that mapper. The reducers connect to each of the mappers and **download** the files of sorted key-value pairs for their partition.[They can be light weight files] Partitioning by reducer, sorting and copying data partitions from mappers to reducers is called _shuffle_.
 
 The reduce task takes the files from the mappers and merges them together, preserving the sort order.
 
@@ -2218,19 +2242,20 @@ MapReduce programming model has separated the physical network communication asp
 
 In an example of a social network, small number of celebrities may have many millions of followers. Such disproportionately active database records are known as _linchpin objects_ or _hot keys_.
 
-A single reducer can lead to significant _skew_ that is, one reducer that must process significantly more records than the others.
+A single reducer can lead to significant _skew_ [load] that is, one reducer that must process significantly more records than the others.
 
-The _skewed join_ method in Pig first runs a sampling job to determine which keys are hot and then records related to the hot key need to be replicated to _all_ reducers handling that key.
+The _skewed join_ method in Pig first runs a sampling job to determine which keys are hot and then records related to the hot key need to be replicated to _all_ reducers handling that key.[load balancing on reducers using pig]
 
-Handling the hot key over several reducers is called _shared join_ method. In Crunch is similar but requires the hot keys to be specified explicitly.
+Handling the hot key over several reducers is called **_shared join_** method. `In Crunch is similar but requires the hot keys to be specified explicitly.`
 
 Hive's skewed join optimisation requries hot keys to be specified explicitly and it uses map-side join. If you _can_ make certain assumptions about your input data, it is possible to make joins faster. A MapReducer job with no reducers and no sorting, each mapper simply reads one input file and writes one output file.
 
 The output of a batch process is often not a report, but some other kind of structure.
 
 Google's original use of MapReduce was to build indexes for its search engine. Hadoop MapReduce remains a good way of building indexes for Lucene/Solr.
+utkarsh https://www.youtube.com/watch?v=CPjSvanPl7s
 
-If you need to perform a full-text search, a batch process is very effective way of building indexes: the mappers partition the set of documents as needed, each reducer builds the index for its partition, and the index files are written to the distributed filesystem. It pararellises very well.
+If you need to perform a full-text search, a batch process is very effective way of building indexes: the mappers partition the set of documents as needed, each reducer builds the index for its partition [reducer may take job by hash[word]%r where r is the no of reducers], and the index files are written to the distributed filesystem. It pararellises very well.
 
 Machine learning systems such as clasifiers and recommendation systems are a common use for batch processing.
 
@@ -2245,8 +2270,9 @@ Writing from the batch job directly to the database server is a bad idea:
 - Making a network request for every single record is magnitude slower than the normal throughput of a batch task.
 - Mappers or reducers concurrently write to the same output database an it can be easily overwhelmed.
 - You have to worry about the results from partially completed jobs being visible to other systems.
+[as we have written concurrently]
 
-A much better solution is to build a brand-new database _inside_ the batch job an write it as files to the job's output directory, so it can be loaded in bulk into servers that handle read-only queries. Various key-value stores support building database files in MapReduce including Voldemort, Terrapin, ElephanDB and HBase bulk loading.
+A much better solution is to build a brand-new database _inside_ the batch job and write it as files to the job's output directory, so it can be loaded in bulk into servers that handle read-only queries. Various key-value stores support building database files in MapReduce including Voldemort, Terrapin, ElephanDB and HBase bulk loading.
 
 ---
 
@@ -2256,9 +2282,9 @@ Design principles that worked well for Unix also seem to be working well for Had
 
 The MapReduce paper was not at all new. The sections we've seen had been already implemented in so-called _massively parallel processing_ (MPP) databases.
 
-The biggest difference is that MPP databases focus on parallel execution of analytic SQL queries on a cluster of machines, while the combination of MapReduce and a distributed filesystem provides something much more like a general-purpose operating system that can run arbitraty programs.
+`The biggest difference is that MPP databases focus on parallel execution of analytic SQL queries on a cluster of machines, while the combination of MapReduce and a distributed filesystem provides something much more like a general-purpose operating system that can run arbitraty programs.`
 
-Hadoop opened up the possibility of indiscriminately dumpint data into HDFS. MPP databases typically require careful upfront modeling of the data and query patterns before importing data into the database's proprietary storage format.
+Hadoop opened up the possibility of indiscriminately dumping data into HDFS. MPP databases typically require careful upfront modeling of the data and query patterns before importing data into the database's proprietary storage format.
 
 In MapReduce instead of forcing the producer of a dataset to bring it into a standarised format, the interpretation of the data becomes the consumer's problem.
 
@@ -2266,13 +2292,13 @@ If you have HDFS and MapReduce, you _can_ build a SQL query execution engine on 
 
 If a node crashes while a query is executing, most MPP databases abort the entire query. MPP databases also prefer to keep as much data as possible in memory.
 
-MapReduce can tolerate the failure of a map or reduce task without it affecting the job. It is also very eager to write data to disk, partly for fault tolerance, and partly because the dataset might not fit in memory anyway.
+MapReduce can tolerate the failure of a map or reduce task without it affecting the job. It is also very eager to write data to disk, `partly for fault tolerance, and partly because the dataset might not fit in memory anyway.`
 
 MapReduce is more appropriate for larger jobs.
 
-At Google, a MapReduce task that runs for an hour has an approximately 5% risk of being terminated to make space for higher-priority process.
+At Google, a MapReduce task that runs for an hour has an approximately 5% risk of being terminated to make space for higher-priority process. [Preemption]
 
-Ths is why MapReduce is designed to tolerate frequent unexpected task termination.
+`Ths is why MapReduce is designed to tolerate frequent unexpected task termination.`
 
 ### Beyond MapReduce
 
@@ -2286,7 +2312,7 @@ The process of writing out the intermediate state to files is called _materialis
 
 MapReduce's approach of fully materialising state has some downsides compared to Unix pipes:
 
-- A MapReduce job can only start when all tasks in the preceding jobs have completed, whereas rocesses connected by a Unix pipe are started at the same time.
+- A MapReduce job can only start when all tasks in the preceding jobs have completed, whereas processes connected by a Unix pipe are started at the same time.
 - Mappers are often redundant: they just read back the same file that was just written by a reducer.
 - Files are replicated across several nodes, which is often overkill for such temporary data.
 
@@ -2319,6 +2345,8 @@ The framework may partition the graph in arbitrary ways.
 Graph algorithms often have a lot of cross-machine communication overhead, and the intermediate state is often bigger than the original graph.
 
 If your graph can fit into memory on a single computer, it's quite likely that a single-machine algorithm will outperform a distributed batch process. If the graph is too big to fit on a single machine, a distributed approach such as Pregel is unavoidable.
+
+`important point while learing microservice architechture : Api gateway which is LB is exposed to the world is rep for handling all api req use HTTPS exposed to the outer and internally in can use http ws https or any other protocol but for client (Android and ios for type of user determination) it is always https`
 
 ## Stream processing
 
