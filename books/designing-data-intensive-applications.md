@@ -486,7 +486,72 @@ Priority of Flushing > L0 to L1 compaction > Ln to Ln+1 compaction. For this we 
 2) Premempt Ln to Ln+1 compaction when L0 to L1 is going on. Setup minimum dedicated io bandwidth for low level compaction process.
 3) Oppotunistically allow Ln to Ln+1 (higher level compaction).
 
+Mergeding are also of 2 types :
+
+1) Write optimized  (Lazy)
+2) Read optimized (Eager)
+
+Good pictorial refernce : https://yetanotherdevblog.com/lsm/
+
+**Writing Data**
+Recall that LSM trees only perform sequential writes. You may be wondering how we sequentially write our data in a sorted format when values may be written in any order. This is solved by using an in-memory tree structure. This is frequently referred to as a memtable, but the underlying data structure is generally some form of a sorted tree like a red-black tree. As writes come in, the data is added to this red-black tree.
+
+Image : https://yetanotherdevblog.com/content/images/2020/06/output-onlinepngtools--5-.png
+
+Our writes get stored in this red-black tree until the tree reaches a predefined size. Once the red-black tree has enough entries, it is flushed to disk as a segment on disk in sorted order. This allows us to write the segment file as a single sequential write even though the inserts may occur in any order.
+
+**Reading data**
+So how do we find a value in our SSTable? A naive approach would be to scan the segments for the desired key. We would start with the newest segment and work our way back to the oldest segment until we find the key that we're looking for. This would mean that we are able to retrieve keys that were recently written more quickly. A simple optimization is to keep an in-memory sparse index.
+
+Image : https://yetanotherdevblog.com/content/images/2020/06/output-onlinepngtools--6-.png
+
+We can use this index to quickly find the offsets for values that would come before and after the key we want. Now we only have to scan a small portion of each segment file based on those bounds. For example, let's consider a scenario where we want to look up the key dollar in the segment above. We can perform a binary search on our sparse index to find that dollar comes between dog and downgrade. Now we only need to scan from offset 17208 to 19504 in order to find the value (or determine it is missing).
+
+This is a nice improvement, but what about looking up records that do not exist? We will still end up looping over all segment files and fail to find the key in each segment. This is something that a bloom filter can help us out with. A bloom filter is a space-efficient data structure that can tell us if a value is missing from our data. We can add entries to a bloom filter as they are written and check it at the beginning of reads in order to efficiently respond to requests for missing data.
+
+**Deleting Data**
+We've covered reading and writing data, but what about deleting data? How do you delete data from the SSTable when the segment files are considered immutable? Deletes  actually follow the exact same path as writing data.  Whenever a delete request is received, a unique marker called a tombstone is written for that key.
+
+Image : https://yetanotherdevblog.com/content/images/2020/06/output-onlinepngtools--8-.png
+
+The example above shows that the key dog had the value 52 at some point in the past, but now it has a tombstone marker. This indicates that if we receive a request for the key dog then we should return a response indicating that the key does not exist. This means that delete requests actually take up disk space initially which many developers may find surprising. Eventually, tombstones will get compacted away so that the value no longer exists on disk.
+
+**Conclusion**
+We now understand how a basic LSM tree storage engine works:
+
+1) Writes are stored in an in-memory tree (also known as a memtable). Any supporting data structures (bloom filters and sparse index) are also updated if necessary.
+2) When this tree becomes too large it is flushed to disk with the keys in sorted order.
+3) When a read comes in we check the bloom filter. If the bloom filter indicates that the value is not present then we tell the client that the key could not be found. If the bloom filter indicates that the value is present then we begin iterating over our segment files from newest to oldest. (Bloom filter can be used fro whole tree or for single single levels).
+4) For each segment file, we check a sparse index and scan the offsets where we expect the key to be found until we find the key. We'll return the value as soon as we find it in a segment file.
+
+References :
+
+https://www.slideshare.net/meeeejin/rocksdb-detail
+https://www.youtube.com/watch?v=b6SI8VbcT4w
+https://www.microsoft.com/en-us/research/uploads/prod/2019/05/Scaling-Write-Intensive-Key-Value-Stores-slides.pdf
+
+When read is to be perfprmed, key is first searched in bloom filter if the SSTable exist with the data. Bloom filter may returm false postive which is bad. Mostly it helps us with finding the table which has the key. The index of the SStable is loaded for binary search, and then the record with dataset is loaded in RAM.
+
+Coming back to reading again : We generally have lot of data for which HDD/Commodity hardware is suitable. While reading , we use to right in WAL, which does not write to memory but HDD in track fashion (sector then next sector on the same track so as the spinning of HDD-pointer is minimum). Hence LSM is used where write-throughput is too high.
+
+
+The above article on LSM is sufficient to understand the lSM tree. _Rest LSM description can be ignored_
+
+**Row vs Column database**
+
+_Row Database_ : As rows are genrally smaller than column, in each sector, row is saved and either fully or internal space is left (internal fragmentation). So if column is to be read, each sector is iterated over and data is pulled to memory, out of which only 1 attribute is read, leading to lot of IO ops. eg ABC are 3 columns and r1 r2 and r3 are 3 rows. for each row , ABC are fulled and B is read so wastage of IO for pulling A and C for r1 r2 and r3 occured. It was due to fact that ABC are stored sector wise. Also row oriented data may not have same type of data, hence no compressio possible by OS. OLTP.
+
+_Column Database_: As the column is treated as row, the whole column will be filled in sector and next sector so all the sectors we load are fully loaded in memory. So any IO op, will load usable data in memory. Also when we have similar kind of data in 1 sector, OS uses data-compression to resize. Writing to the column database involves break down of row, into attributes and writing each attribute to the sector where the last pointer was. OLAP.
+
+**Data Warehousing**
+
+We have a staging area where data from OLTP is transformed into OLAP in batch processing manner, periodically.
+
+**Materialized view**
+
 ==========================================================================================
+
+The working of LSM tree is well explained above, here there is not much still important points to look. Ignore internal working of lsm tree.
 
 **Bitcask (the default storage engine in Riak) does it like that.** The only requirement it has is that all the keys fit in the available RAM. Values can use more space than there is available in memory, since they can be loaded from disk.
 
@@ -527,8 +592,29 @@ We call this _Sorted String Table_, or _SSTable_. We require that each key only 
 2. **You no longer need to keep an index of all the keys in memory.** For a key like `handiwork`, when you know the offsets for the keys `handback` and `handsome`, you know `handiwork` must appear between those two. You can jump to the offset for `handback` and scan from there until you find `handiwork`, if not, the key is not present. You still need an in-memory index to tell you the offsets for some of the keys. One key for every few kilobytes of segment file is sufficient.
 3. Since read requests need to scan over several key-value pairs in the requested range anyway, **it is possible to group those records into a block and compress it** before writing it to disk.
 
+============================================================================================
 utkarsh
 https://stackoverflow.com/questions/13852870/red-black-tree-over-avl-tree
+
+What's the main reason for choosing Red black trees instead of AVL trees?
+
+Both red-black trees and AVL trees are the most commonly used balanced binary search trees and they support insertion, deletion and look-up in guaranteed O(logN) time. However, there are following points of comparison between the two:
+
+1) AVL trees are more rigidly balanced and hence provide faster look-ups. **Thus for a look-up intensive task use an AVL tree.
+For an insert intensive tasks, use a Red-Black tree.**
+2) AVL trees store the balance factor at each node. This takes O(N) extra space. However, if we know that the keys that will be inserted in the tree will always be greater than zero, we can use the sign bit of the keys to store the colour information of a red-black tree. Thus, in such cases red-black tree takes no extra space.
+
+What are the application of Red black tree?
+
+Red-black trees are more general purpose. They do relatively well on add, remove, and look-up but AVL trees have faster look-ups at the cost of slower add/remove. Red-black tree is used in the following:
+
+Java: java.util.TreeMap, java.util.TreeSet
+C++ STL (in most implementations): map, multimap, multiset
+Linux kernel: completely fair scheduler, linux/rbtree.h
+
+Red-black tree is good when you need high write throughput , with no much chnage in read throughput. Whereas AVL tree have higher write throughput due to node-balance extra memory.
+
+============================================================================================
 
 How do we get the data sorted in the first place? With red-black trees or AVL trees, you can insert keys in any order and read them back in sorted order.
 
@@ -538,27 +624,6 @@ How do we get the data sorted in the first place? With red-black trees or AVL tr
 - From time to time, run merging and compaction in the background to discard overwritten and deleted values.
 
 If the database crashes, the most recent writes are lost. We can keep a separate log on disk to which every write is immediately appended. That log is not in sorted order, but that doesn't matter, because its only purpose is to restore the memtable after crash. Every time the memtable is written out to an SSTable, the log can be discarded.
-
-`Summary of Write-ahead Log and SStables`
-
-Write-ahead Log : `During write operation`, We define a segment size of some length and first write the key-value there and then to in-memory hash-table `for each segment`. After the segment size is reached, we flush the snapshot of that segment's hash-table in the form of file which is nothing but compacted version of segment, and we can then delete the actual segment which is uncompacted version, but for that deleted segment we will maintain the in-memory hash-table. Then why we wrote the segment? as it is persistent backup of currently coming key-value in case of power failure, after which we can use it to regenerate the hash-table + older hashtable files can also be compacted making new hash-table and that can be flushed to hard disk keeping the merged hashtable in-memory also, deleting the older hash-table files and corresponding in-memory hash-tables loaded for merging , and start writing new key-values. Generally at any time we have 1 on-going backup segment + n compacted hash-tables in the form of file which are periodically merged + n in-memory hashtables. At the periodic intervals of time , Hash-table file are merged as they are already compacted, and new hash-table after merging hash-table files is flushed to storage keeping newly merge hash-table in memory, deleting old hash-table snapshots files and also the old hash-table which were present in memory, hence after merging, 1 segment(for ongoing read) + merged hash-table file + 1 in-memory hashtable is there. `During read operation` , the key is first looked into last hash-table (latest hash-table) and if not found we keep looking up into 2nd last and so on hashtables. These are multiple hashtables created as period merging has still not occurred. `Only condition` all keys should be there in RAM.
-
-`SSTables` : `Writing scenario` Used in eg cassandra, using memcache and single segment , we write to segment first , then to memcache in sorted order which after a threshold value , is flushed to disk (This flushed file is sorted and is called SStable) and (backup segment and in-memory memcache) is deleted, creating a new memcache instance to write more inputs. `Reading Scenario` In-memory memcache is searched for key , if not present is looked up into SSTables in LastInFirst order. Also periodically, all SSTables are merged together, giving in prefernece the latest keys.
-_SSTables are much better for_
-
-1. Range queries of keys : Starting from latest record , moving back to older records and adding key-val to hashTable and finally return.
-
-2. Batch Queries too as data will be retrieved in 1 go can be dictributed accordingly to client who requested for it.
-
-**Storage engines that are based on this principle of merging and compacting sorted files are often called LSM structure engines (Log Structure Merge-Tree).**
-
-Lucene, an indexing engine for full-text search used by Elasticsearch and Solr, uses a similar method for storing its _term dictionary_.
-
-LSM-tree algorithm can be slow when looking up keys that don't exist in the database. To optimise this, storage engines often use additional _Bloom filters_ (a memory-efficient data structure for approximating the contents of a set).
-utkarsh
-https://www.youtube.com/watch?v=Bay3X9PAX5k
-
-There are also different strategies to determine the order and timing of how SSTables are compacted and merged. Mainly two _size-tiered_ and _leveled_ compaction. LevelDB and RocksDB use leveled compaction, HBase use size-tiered, and Cassandra supports both. In size-tiered compaction, newer and smaller SSTables are successively merged into older and larger SSTables. In leveled compaction, the key range is split up into smaller SSTables and older data is moved into separate "levels", which allows the compaction to use less disk space.
 
 #### B-trees
 
@@ -572,13 +637,82 @@ If you want to update the value for an existing key in a B-tree, you search for 
 
 Trees remain _balanced_. A B-tree with _n_ keys always has a depth of _O_(log _n_).
 
-The basic underlying write operation of a B-tree is to overwrite a page on disk with new data. It is assumed that the overwrite does not change the location of the page, all references to that page remain intact. `This is a big contrast to log-structured indexes such as LSM-trees, which only append to files.`
+The basic underlying write operation of a B-tree is to overwrite a page on disk with new data. It is assumed that the overwrite does not change the location of the page, all references to that page remain intact. `This is a big contrast to log-structured indexes such as LSM-trees, which only append to files (as SSTables are immutable and merging makes new file)`
 
 Some operations require several different pages to be overwritten. When you split a page, you need to write the two pages that were split, and also overwrite their parent. If the database crashes after only some of the pages have been written, you end up with a corrupted index.
 
 It is common to include an additional data structure on disk: a _write-ahead log_ (WAL, also know as the _redo log_).
 
 Careful concurrency control is required if multiple threads are going to access, typically done protecting the tree internal data structures with _latches_ (lightweight locks).
+
+**Indexing in DBMS**
+
+We know that data is stored in the form of records. Every record has a key field, which helps it to be recognized uniquely.
+
+Indexing is a data structure technique to efficiently retrieve records from the database files based on some attributes on which the indexing has been done. Indexing in database systems is similar to what we see in books.
+
+We've only discussed key-value indexes, which are like _primary key_ index. There are also _secondary indexes_.
+
+A secondary index can be easily constructed from a key-value index. The main difference is that in a secondary index, the indexed values are not necessarily unique. There are two ways of doing this: making each value in the index a list of matching row identifiers or by making a each entry unique by appending a row identifier to it.
+
+Indexing is defined based on its indexing attributes. Indexing can be of the following types −
+
+1) Primary Index − Primary index is defined on an ordered data file. The data file is ordered on a key field. The key field is generally the primary key of the relation.
+
+2) Secondary Index − Secondary index may be generated from a field which is a candidate key and has a unique value in every record, or a non-key with duplicate values.
+
+3) Clustering Index − Clustering index is defined on an ordered data file. The data file is ordered on a non-key field.
+
+Ordered Indexing is of two types −
+
+1) Dense Index
+In dense index, there is an index record for every search key value in the database. This makes searching faster but requires more space to store index records itself. Index records contain search key value and a pointer to the actual record on the disk.
+https://www.tutorialspoint.com/dbms/images/dense_index.png
+
+2) Sparse Index
+In sparse index, index records are not created for every search key. An index record here contains a search key and an actual pointer to the data on the disk. To search a record, we first proceed by index record and reach at the actual location of the data. If the data we are looking for is not where we directly reach by following the index, then the system starts sequential search until the desired data is found.
+https://www.tutorialspoint.com/dbms/images/sparse_index.png
+
+3) Multilevel Index
+Index records comprise search-key values and data pointers. Multilevel index is stored on the disk along with the actual database files. As the size of the database grows, so does the size of the indices. There is an immense need to keep the index records in the main memory so as to speed up the search operations. If single-level index is used, then a large size index cannot be kept in memory which leads to multiple disk accesses.
+https://www.tutorialspoint.com/dbms/images/multi_level_index.png
+
+**Concurrency control protocol**
+
+https://www.guru99.com/dbms-concurrency-control.html#2
+
+> 4 problems in concurrency:
+
+1) Lost update
+2) Phantom read
+3) Dirty read
+4) Unrepeatable read
+
+> To check if the schedule is serializable (behaving same as serial schedule but faster), we have to check for:
+
+1) Conflict serializability
+2) View serializability
+3) Recoverability
+4) Cascadelessness
+
+Why transactions?
+In a schedule(parallel transactions), everything goes good until 2 or more transactions acquiring lock on same data with 2 or more as write operations. The actual problem is the interaction of 1 transaction with other making it read a value which is no commited till now (`Dirty read`). For this we need certain techniques or protocols to make schedules conflict-serializable. Techniques are as follows :
+
+> But if we have to make transcaction serializable we need protocols such as :
+
+1. Time Stamp protocol
+2. 2Phase Locking (Basic, conservative, rigrous and strict)
+3. Graph based protocol (Tree Based protocol)
+4. Multi version concurrency control
+5. Validation concurrency control
+
+In summary down below we have dicussed 2PL and graph based.
+
+In 2PL we have 4 ways, which tackle each problem separately out of which we have deadlock (tacked by conversative) , irrecovorability and cascadelessness (tackled by rigrous) and efficiency of improvement made over rigrous (by unlocking the read locks and not waiting for them to commit) by strict.
+
+Still most common protocol used in TimeStamping protocol.
+
+2PL will be ecxplained later in detial.
 
 #### B-trees and LSM-trees
 
@@ -593,12 +727,6 @@ Downsides of LSM-trees:
 
 - Compaction process can sometimes interfere with the performance of ongoing reads and writes. B-trees can be more predictable. The bigger the database, the the more disk bandwidth is required for compaction. Compaction cannot keep up with the rate of incoming writes, if not configured properly you can run out of disk space.
 - On B-trees, each key exists in exactly one place in the index. This offers strong transactional semantics. Transaction isolation is implemented using locks on ranges of keys, and in a B-tree index, those locks can be directly attached to the tree.
-
-#### Other indexing structures
-
-We've only discussed key-value indexes, which are like _primary key_ index. There are also _secondary indexes_.
-
-A secondary index can be easily constructed from a key-value index. The main difference is that in a secondary index, the indexed values are not necessarily unique. There are two ways of doing this: making each value in the index a list of matching row identifiers or by making a each entry unique by appending a row identifier to it.
 
 #### Full-text search and fuzzy indexes
 
@@ -634,7 +762,7 @@ These queries are often written by business analysts, and fed into reports. This
 
 #### Data warehousing
 
-A _data warehouse_ is a separate database that analysts can query to their heart's content without affecting OLTP operations. It contains read-only copy of the dat in all various OLTP systems in the company. Data is extracted out of OLTP databases (through periodic data dump or a continuous stream of update), transformed into an analysis-friendly schema, cleaned up, and then loaded into the data warehouse (process _Extract-Transform-Load_ or ETL).
+A _data warehouse_ is a separate database that analysts can query to their heart's content without affecting OLTP operations. It contains read-only copy of the data in all various OLTP systems in the company. Data is extracted out of OLTP databases (through periodic data dump or a continuous stream of update), transformed into an analysis-friendly schema, cleaned up, and then loaded into the data warehouse (process _Extract-Transform-Load_ or ETL).
 
 A data warehouse is most commonly relational, but the internals of the systems can look quite different.
 
@@ -649,6 +777,18 @@ Dimensions represent the _who_, _what_, _where_, _when_, _how_ and _why_ of the 
 The name "star schema" comes from the fact than when the table relationships are visualised, the fact table is in the middle, surrounded by its dimension tables, like the rays of a star.
 
 Fact tables often have over 100 columns, sometimes several hundred. Dimension tables can also be very wide.
+
+> Generally a data warehouses adopts a three-tier architecture. Following are the three tiers of the data warehouse architecture.
+
+Bottom Tier − The bottom tier of the architecture is the data warehouse database server. It is the relational database system. We use the back end tools and utilities to feed data into the bottom tier. These back end tools and utilities perform the Extract, Clean, Load, and refresh functions.
+
+Middle Tier − In the middle tier, we have the OLAP Server that can be implemented in either of the following ways.
+
+By Relational OLAP (ROLAP), which is an extended relational database management system. The ROLAP maps the operations on multidimensional data to standard relational operations.
+
+By Multidimensional OLAP (MOLAP) model, which directly implements the multidimensional data and operations.
+
+Top-Tier − This tier is the front-end client layer. This layer holds the query tools and reporting tools, analysis tools and data mining tools.
 
 ### Column-oriented storage
 
@@ -1349,6 +1489,8 @@ In a schedule(parallel transactions), everything goes good until 2 or more trans
 In summary down below we have dicussed 2PL and graph based.
 
 In 2PL we have 4 ways, which tackle each problem separately out of which we have deadlock (tacked by conversative) , irrecovorability and cascadelessness (tackled by rigrous) and efficiency of improvement made over rigrous (by unlocking the read locks and not waiting for them to commit) by strict.
+
+Still most common protocol used in TimeStamping protocol.
 
 ## `utkarsh Summary of deadlocks`
 
