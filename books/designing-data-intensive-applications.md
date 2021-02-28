@@ -534,20 +534,7 @@ When read is to be perfprmed, key is first searched in bloom filter if the SSTab
 
 Coming back to reading again : We generally have lot of data for which HDD/Commodity hardware is suitable. While reading , we use to right in WAL, which does not write to memory but HDD in track fashion (sector then next sector on the same track so as the spinning of HDD-pointer is minimum). Hence LSM is used where write-throughput is too high.
 
-
 The above article on LSM is sufficient to understand the lSM tree. _Rest LSM description can be ignored_
-
-**Row vs Column database**
-
-_Row Database_ : As rows are genrally smaller than column, in each sector, row is saved and either fully or internal space is left (internal fragmentation). So if column is to be read, each sector is iterated over and data is pulled to memory, out of which only 1 attribute is read, leading to lot of IO ops. eg ABC are 3 columns and r1 r2 and r3 are 3 rows. for each row , ABC are fulled and B is read so wastage of IO for pulling A and C for r1 r2 and r3 occured. It was due to fact that ABC are stored sector wise. Also row oriented data may not have same type of data, hence no compressio possible by OS. OLTP.
-
-_Column Database_: As the column is treated as row, the whole column will be filled in sector and next sector so all the sectors we load are fully loaded in memory. So any IO op, will load usable data in memory. Also when we have similar kind of data in 1 sector, OS uses data-compression to resize. Writing to the column database involves break down of row, into attributes and writing each attribute to the sector where the last pointer was. OLAP.
-
-**Data Warehousing**
-
-We have a staging area where data from OLTP is transformed into OLAP in batch processing manner, periodically.
-
-**Materialized view**
 
 ==========================================================================================
 
@@ -690,7 +677,7 @@ https://www.guru99.com/dbms-concurrency-control.html#2
 
 > To check if the schedule is serializable (behaving same as serial schedule but faster), we have to check for:
 
-1) Conflict serializability
+1) Conflict serializability = Serializable schedule , precedence graph has no loop is called C.S
 2) View serializability
 3) Recoverability
 4) Cascadelessness
@@ -790,6 +777,14 @@ By Multidimensional OLAP (MOLAP) model, which directly implements the multidimen
 
 Top-Tier − This tier is the front-end client layer. This layer holds the query tools and reporting tools, analysis tools and data mining tools.
 
+https://www.tutorialspoint.com/dwh/images/dwh_architecture.jpg
+
+**Row vs Column database**
+
+_Row Database_ : As rows are genrally smaller than column, in each sector, row is saved and either fully or internal space is left (internal fragmentation). So if column is to be read, each sector is iterated over and data is pulled to memory, out of which only 1 attribute is read, leading to lot of IO ops. eg ABC are 3 columns and r1 r2 and r3 are 3 rows. for each row , ABC are fulled and B is read so wastage of IO for pulling A and C for r1 r2 and r3 occured. It was due to fact that ABC are stored sector wise. Also row oriented data may not have same type of data, hence no compressio possible by OS. OLTP.
+
+_Column Database_: As the column is treated as row, the whole column will be filled in sector and next sector so all the sectors we load are fully loaded in memory. So any IO op, will load usable data in memory. Also when we have similar kind of data in 1 sector, OS uses data-compression to resize. Writing to the column database involves break down of row, into attributes and writing each attribute to the sector where the last pointer was. OLAP.
+
 ### Column-oriented storage
 
 In a row-oriented storage engine, when you do a query that filters on a specific field, the engine will load all those rows with all their fields into memory, parse them and filter out the ones that don't meet the requirement. This can take a long time.
@@ -807,8 +802,13 @@ Besides reducing the volume of data that needs to be loaded from disk, column-or
 Summary of indexing (Bitmap vs Btree)
 utkarsh
 https://www.youtube.com/watch?v=5-JYVeM3IQg
+
 `Cardinality of a column` is distinct value in that column.
 When the column is to be indexed, its cardinality can be high or low. If the cardinality is high go for Btree, if the cardinality is low, as BTree are space consuming, go for Bitmap Indexing. After extracting out rows which satisfy the conditions in where clause using bitmap and btree,merge those rows together. Nitmap are space-efficient.
+
+https://www.researchgate.net/profile/Kesheng_Wu/publication/235708754/figure/fig9/AS:668212542840841@1536325693518/An-illustration-of-the-first-two-steps-of-the-bitmap-index-construction-process.png
+
+https://pasteboard.co/JNrQoXR.png
 
 **Column-oriented storage, compression, and sorting helps to make read queries faster and make sense in data warehouses, where most of the load consist on large read-only queries run by analysts. The downside is that writes are more difficult.**
 
@@ -826,18 +826,50 @@ https://www.youtube.com/watch?v=yoE6bgJv08E
 
 A common special case of a materialised view is know as a _data cube_ or _OLAP cube_, a grid of aggregates grouped by different dimensions such as time say in months, column1 and column2 category , which makes a total of number of months X column1 category X column2 category. Making this cube can be 1 time task.
 
+**More on SQL vs NOSQL in detail**
+
+It's not about NoSQL vs SQL, it's about BASE vs ACID.
+
+Scalable has to be broken down into its constituents:
+
+Read scaling = handle higher volumes of read operations
+Write scaling = handle higher volumes of write operations
+ACID-compliant databases (like traditional RDBMS's) can scale reads. They are not inherently less efficient than NoSQL databases because the (possible) performance bottlenecks are introduced by things NoSQL (sometimes) lacks (like joins and where restrictions) which you can opt not to use. Clustered SQL RDBMS's can scale reads by introducing additional nodes in the cluster. There are constraints to how far read operations can be scaled, but these are imposed by the difficulty of scaling up writes as you introduce more nodes into the cluster.
+
+Write scaling is where things get hairy. There are various constraints imposed by the ACID principle which you do not see in eventually-consistent (BASE) architectures:
+
+Atomicity means that transactions must complete or fail as a whole, so a lot of bookkeeping must be done behind the scenes to guarantee this.
+Consistency constraints mean that all nodes in the cluster must be identical. If you write to one node, this write must be copied to all other nodes before returning a response to the client. This makes a traditional RDBMS cluster hard to scale.
+Durability constraints mean that in order to never lose a write you must ensure that before a response is returned to the client, the write has been flushed to disk.
+To scale up write operations or the number of nodes in a cluster beyond a certain point you have to be able to relax some of the ACID requirements:
+
+Dropping Atomicity lets you shorten the duration for which tables (sets of data) are locked. Example: MongoDB, CouchDB.
+Dropping Consistency lets you scale up writes across cluster nodes. Examples: riak, cassandra.
+Dropping Durability lets you respond to write commands without flushing to disk. Examples: memcache, redis.
+NoSQL databases typically follow the BASE model instead of the ACID model. They give up the A, C and/or D requirements, and in return they improve scalability. Some, like Cassandra, let you opt into ACID's guarantees when you need them. However, not all NoSQL databases are more scalable all the time.
+
+The SQL API lacks a mechanism to describe queries where ACID's requirements are relaxed. This is why the BASE databases are all NoSQL.
+
+Personal note: one final point I'd like to make is that most cases where NoSQL is currently being used to improve performance, a solution would be possible on a proper RDBMS by using a correctly normalized schema with proper indexes. As proven by this very site (powered by MS SQL Server) RDBMS's can scale to high workloads, if you use them appropriately. People who don't understand how to optimize RDBMS's should stay away from NoSQL, because they don't understand what risks they are taking with their data.
+
+Update (2019-09-17):
+
+The landscape of databases has evolved since posting this answer. While there is still the dichotomy between the RDBMS ACID world and the NoSQL BASE world, the line has become fuzzier. The NoSQL databases have been adding features from the RDBMS world like SQL API's and transaction support. There are now even databases which promise SQL, ACID and write scaling, like Google Cloud Spanner, YugabyteDB or CockroachDB. Typically the devil is in the details, but for most purposes these are "ACID enough". For a deeper dive into database technology and how it has evolved you can take a look at this slide deck (the slide notes have the accompanying explanation).
+
+https://docs.google.com/presentation/d/1ovHHGT-H-wfGlRqYB1V-1aydSz3O4W9xR7kMQEIJ7CI/edit?usp=sharing
+
 ## Encoding and evolution
 
 Change to an application's features also requires a change to data it stores.
 
-Relational databases conforms to one schema although that schema can be changed, there is one schema in force at any point in time. **Schema-on-read (or schemaless) contain a mixture of older and newer data formats.**
+Relational databases conforms to one schema although that schema can be changed, there is one schema in force at any point in time. **Schema-on-read (or schemaless) contain a mixture of older and newer data formats, newer being backward compatible and older being forward compatible**
 
 In large applications changes don't happen instantaneously. You want to perform a _rolling upgrade_ and deploy a new version to a few nodes at a time, gradually working your way through all the nodes without service downtime.
 
 Old and new versions of the code, and old and new data formats, may potentially all coexist. We need to maintain compatibility in both directions
 
-- Backward compatibility, newer code can read data that was written by older code.
-- Forward compatibility, older code can read data that was written by newer code.
+- Backward compatibility code newer code can read data that was written by older code.
+- Forward compatibility code, older code can read data that was written by newer code.
 
 ### Formats for encoding data
 
@@ -866,10 +898,29 @@ utkarsh https://www.youtube.com/watch?v=8qkxeZmKmOY
 - There is optional schema support for both XML and JSON
 - CSV does not have any schema
 
+> **Fun facts**
+
+1) How images are stored in comp : images -> pizel information -> colored image : 256*256*246 = 2^24 combinations = 24 bits.
+The color of each pixel is determined by the combination of the red, green, and blue intensities stored in each color plane at the pixel's location. Graphics file formats store RGB images as 24-bit images, where the red, green, and blue components are 8 bits each. The data may then be compressed (lossy or lossless). The data in bits formed is finally stored in transistors on HDD.
+
+Primary and secondary memory : RAM and HDD
+RAM (Volatile memory) = Static (Made of transistors, need no refresh, costly) RAM and Dynamic (made of capacitors, need refresh, not costly)
+
+Gnerally, RAM has MAR of n bits which can address 2^n words using decoder after which MBR reads/writes data to/from that location.
+RAM can be 2D, which means 2^n addresses using a decoder forming a mesh of 2^n * words.
+RAM can be 2.5D, which means 2^(n/2) * 2^(n/2) addresses using a decoder forming a mesh of 2^n * words.
+In 2.5D, decoder is divided into 2 decoder which can address 2^(n/2) * 2^(n/2) = 2^n bits.
+
+Read the post before starting encoding: https://blog.softwaremill.com/the-best-serialization-strategy-for-event-sourcing-9321c299632b
+https://martin.kleppmann.com/2012/12/05/schema-evolution-in-avro-protocol-buffers-thrift.html
+
+In real life, data is always in flux. The moment you think you have finalised a schema, someone will come up with a use case that wasn’t anticipated, and wants to “just quickly add a field”. Fortunately Thrift, Protobuf and Avro all support schema evolution: you can change the schema, you can have producers and consumers with different versions of the schema at the same time, and it all continues to work. That is an extremely valuable feature when you’re dealing with a big production system, because it allows you to update different components of the system independently, at different times, without worrying about compatibility.
+
 #### Binary encoding
 
 JSON is less verbose than XML, but both still use a lot of space compared to binary formats. There are binary encodings for JSON (MesagePack, BSON, BJSON, UBJSON, BISON and Smile), similar thing for XML (WBXML and Fast Infoset).
 
+Same reference
 http://martin.kleppmann.com/2012/12/05/schema-evolution-in-avro-protocol-buffers-thrift.html
 
 **Apache Thrift and Protocol Buffers (protobuf) are binary encoding libraries.**
@@ -883,7 +934,7 @@ utkarsh https://www.youtube.com/watch?v=Z2uqrGyeypE
 
 utkarsh https://www.youtube.com/watch?v=P5Ynn8stfnc
 
-`Protocol Buffers` are very similar to Thrift's CompactProtocol, bit packing is a bit different and that might allow smaller compression.
+`Protocol Buffers` are very similar to Thrift's CompactProtocol, but packing is a bit different and that might allow smaller compression.
 
 Schemas inevitable need to change over time (_schema evolution_), how do Thrift and Protocol Buffers handle schema changes while keeping backward and forward compatibility changes?
 
@@ -935,6 +986,10 @@ Although textual formats such as JSON, XML and CSV are widespread, binary encodi
 ### Modes of dataflow
 
 Different process on how data flows between processes
+https://medium.com/better-programming/evolving-a-database-schema-10b7f4094d14
+
+1) Using a common database for 2 diff processes, 2 same process with diff versions.
+2) Service calls
 
 #### Via databases
 
@@ -962,6 +1017,17 @@ _Remote procedure calls_ (RPC) tries to make a request to a remote network servi
 - A network request is much slower than a function call, and its latency is wildly variable.
 - Parameters need to be encoded into a sequence of bytes that can be sent over the network and becomes problematic with larger objects.
 - The RPC framework must translate datatypes from one language to another, not all languages have the same types.
+- The RPC may be communicating with 32 bit machine or any other machine where we have 1 representation as Big endian and other as little endian. Here the data is converted to machine independent representation, XDR (external data represntation) which is decoded on other machine.
+- The RPC call may get executed more than once for which OS should take care of RPC getting executed only once instead of more than once.
+- The RPC is action oriented, between the servers of same DataCenter. GRPC uses HTTp 2.0 which optimmizes at network layer, making it 10 times faster.
+
+https://www.youtube.com/watch?v=jH3RezOHROU
+In RPC we have matchmaker port which assigns port to RPC to execute a procedure.
+
+Advantage : When used in same datacenter, RPC is fast compared to rest.
+Disadvantages : Not much of abstraction, function explosion, tight coupling.
+
+=> To solve this no absrtaction and tight coupling problem, REST was introduced.
 
 **There is no point trying to make a remote service look too much like a local object in your programming language, because it's a fundamentally different thing.**
 
@@ -969,7 +1035,7 @@ New generation of RPC frameworks are more explicit about the fact that a remote 
 
 RESTful API has some significant advantages like being good for experimentation and debugging.
 
-REST seems to be the predominant style for public APIs. The main focus of RPC frameworks is on requests between services owned by the same organisation, typically within the same datacenter.
+REST seems to be the predominant style for public APIs. The main focus of RPC/GRPC frameworks is on requests between services owned by the same organisation, typically within the same datacenter.
 
 utkarsh https://www.youtube.com/watch?v=9qffVkr-BfM
 
@@ -979,7 +1045,7 @@ In an _asynchronous message-passing_ systems, a client's request (usually called
 
 - It can act as a buffer if the recipient is unavailable or overloaded
 - It can automatically redeliver messages to a process that has crashed and prevent messages from being lost
-- It avoids the sender needing to know the IP address and port number of the recipient (useful in a cloud environment)
+- It avoids the sender **needing to know the IP address and port number of the recipient** (useful in a cloud environment)
 - It allows one message to be sent to several recipients
 - **Decouples the sender from the recipient**
 
@@ -991,15 +1057,16 @@ One process sends a message to a named _queue_ or _topic_ and the broker ensures
 
 Message brokers typically don't enforce a particular data model, you can use any encoding format.
 
-An _actor model_ is a programming model for concurrency in a single process. Rather than dealing with threads (and their complications), logic is encapsulated in _actors_. Each actor typically represent one client or entity, it may have some local state, and it communicates with other actors by sending and receiving asynchronous messages. Message deliver is not guaranteed. Since each actor processes only one message at a time, it doesn't need to worry about threads.
+An _actor model_ is a programming model for concurrency in a single process (Event loop for async io intensive calls). Rather than dealing with threads (and their complications), logic is encapsulated in _actors_. Each actor typically represent one client or entity, it may have some local state, and it communicates with other actors by sending and receiving asynchronous messages. Message deliver is not guaranteed. Since each actor processes only one message at a time, it doesn't need to worry about threads.
 
 In _distributed actor frameworks_, this programming model is used to scale an application across multiple nodes. It basically integrates a message broker and the actor model into a single framework.
 
-- _Akka_ uses Java's built-in serialisation by default, which does not provide forward or backward compatibility. You can replace it with something like Protocol Buffers and the ability to do rolling upgrades.
+- _Akka_ uses Java's built-in serialization by default, which does not provide forward or backward compatibility. You can replace it with something like Protocol Buffers and the ability to do rolling upgrades.
 - _Orleans_ by default uses custom data encoding format that does not support rolling upgrade deployments.
 - In _Erlang OTP_ it is surprisingly hard to make changes to record schemas.
 
-utkarsh Good time to learn Micro-service architechture to understand communication between 2 machines based on Network calls specially
+utkarsh
+Good time to learn Micro-service architechture to understand communication between 2 machines based on Network calls specially
 https://www.youtube.com/watch?v=552Zf6ZE6GE
 
 And its Whole Playlist is:
@@ -1016,6 +1083,11 @@ Reasons for distribute a database across multiple machines:
 - Latency, having servers at various locations worldwide
 
 utkarsh https://www.youtube.com/watch?v=hzgz867rGHI
+
+**How transaction occurs debit and credit from 2 accounts**
+
+https://softwareengineering.stackexchange.com/questions/409778/are-bank-transactions-run-with-db-transactions
+https://medium.com/trendyol-tech/saga-pattern-briefly-5b6cf22dfabc
 
 ## Replication
 
@@ -1039,7 +1111,7 @@ Every write to the database needs to be processed by every replica. The most com
 
 MySQL, Oracle Data Guard, SQL Server's AlwaysOn Availability Groups, MongoDB, RethinkDB, Espresso, Kafka and RabbitMQ are examples of these kind of databases.
 
-#### Synchronous vs asynchronous
+#### Synchronous vs asynchronous vs semi synchronous
 
 **The advantage of synchronous replication is that the follower is guaranteed to have an up-to-date copy of the data that is consistent with the leader. The disadvantage is that if the synchronous follower doesn't respond, the write cannot be processed.**
 
@@ -1047,7 +1119,7 @@ It's impractical for all followers to be synchronous. If you enable synchronous 
 
 Often, leader-based replication is asynchronous. Writes are not guaranteed to be durable, the main advantage of this approach is that the leader can continue processing writes.
 
-Optimum stratedy will be to send synchronous write to 1 follower and get the conformation from atleast 1 and then send synchronously to others.
+Optimum/hybrid stratedy will be to send synchronous write to 1 follower and get the conformation from atleast 1 and then send synchronously to others.
 
 #### Setting up new followers
 
@@ -1057,12 +1129,13 @@ Setting up a follower can usually be done without downtime. The process looks li
 
 utkarsh snapshot https://www.youtube.com/watch?v=7on5wFJZsew
 
-Snapshot is nothing but copy before write where previous values which are to be updated are stored in snapshot. Hence below in point 2 and 3 when follower copies the snapshot and chnages, it get updated.
+Snapshot is nothing but copy before write where previous values which are to be updated are stored in snapshot. Hence below in point 2 and 3 when follower copies the snapshot and changes, it get updated.
 
 1. Take a snapshot of the leader's database
 2. Copy the snapshot to the follower node
-3. Follower requests data changes that have happened since the snapshot was taken
-4. Once follower processed the backlog of data changes since snapshot, it has _caught up_.
+3. Keep _replication log_ or _change stream_, while snapshot is being made.
+4. Follower requests data changes  from change stream. that have happened since the snapshot was taken
+5. Once follower processed the backlog of data changes since snapshot, it has _caught up_.
 
 #### Handling node outages
 
@@ -1070,17 +1143,19 @@ How does high availability works with leader-based replication?
 
 #### Follower failure: catchup recovery
 
-Follower can connect to the leader and request all the data changes that occurred during the time when the follower was disconnected.
+Follower can connect to the leader and request all the data changes that occurred during the time when the follower was disconnected, using change stream.
 
 #### Leader failure: failover
 
-One of the followers needs to be promoted to be the new leader, clients need to be reconfigured to send their writes to the new leader and followers need to start consuming data changes from the new leader.
+1) One of the followers needs to be promoted to be the new leader.
+2) Clients need to be reconfigured to send their writes to the new leader.
+3) Followers need to start consuming data changes from the new leader.
 
 Automatic failover consists:
 
 1. Determining that the leader has failed. If a node does not respond in a period of time it's considered dead.
-2. Choosing a new leader. The best candidate for leadership is usually the replica with the most up-to-date changes from the old leader.
-3. Reconfiguring the system to use the new leader. The system needs to ensure that the old leader becomes a follower and recognises the new leader.
+2. Choosing a new leader. The best candidate for leadership is usually the replica with the most up-to-date changes from the old leader (Choose most up to date follower).
+3. Reconfiguring the system to use the new leader. The system needs to ensure that the old leader becomes a follower and recognizes the new leader.
 
 Things that could go wrong:
 
@@ -1089,7 +1164,9 @@ Things that could go wrong:
 - It could happen that two nodes both believe that they are the leader (_split brain_). Data is likely to be lost or corrupted.
 - What is the right time before the leader is declared dead?
 
-For these reasons, some operation teams prefer to perform failovers manually, even if the software supports automatic failover.
+For these reasons, some operation teams prefer to perform failovers manually (sort of manual merge conflicts), even if the software supports automatic failover.
+
+eg consider m f1 and f2 as 3 nodes, write 'a' to m , f1 will also get this write in sync way and f2 in async way. Now m fails and 'a' is there with f1, and somehow f2 is selected as new master, writing 'a' (here a means row a) to f2, there will be no proper clarity as to which a is actual (one write right now or one which is propagated in async way).
 
 #### Implementation of replication logs
 
@@ -1105,7 +1182,7 @@ This type of replication has some problems:
 - Statements that depend on existing data, like auto-increments, must be executed in the same order in each replica.
 - Statements with side effects may result on different results on each replica.
 
-A solution to this is to replace any nondeterministic function with a fixed return value in the leader.
+A solution to this is to replace any nondeterministic function with _a fixed return value_ in the leader.
 
 ##### Write-ahead log (WAL) shipping
 
@@ -1129,7 +1206,7 @@ Since logical log is decoupled from the storage engine internals, it's easier to
 
 Logical logs are also easier for external applications to parse, useful for data warehouses, custom indexes and caches (_change data capture_).
 
-##### Trigger-based replication
+##### Trigger-based replication log
 
 There are some situations where you may need to move replication up to the application layer.
 
@@ -1137,7 +1214,7 @@ A trigger lets you register custom application code that is automatically execut
 
 Main disadvantages is that this approach has greater overheads, is more prone to bugs but it may be useful due to its flexibility.
 
-### Problems with replication lag
+### Problems with replication lag (time lag)
 
 Node failures is just one reason for wanting replication. Other reasons are scalability and latency.
 
@@ -1165,11 +1242,11 @@ Another complication is that the same user is accessing your service from multip
 Some additional issues to consider:
 
 - Remembering the timestamp of the user's last update becomes more difficult. The metadata will need to be centralised.
-- If replicas are distributed across datacenters, there is no guarantee that connections from different devices will be routed to the same datacenter. You may need to route requests from all of a user's devices to the same datacenter.
+- If replicas are distributed across datacenters, there is no guarantee that connections from different devices will be routed to the same datacenter. **_You may need to route requests from all of a user's devices to the same datacenter._**
 
 #### Monotonic reads
 
-`Suppose we have master and 2 folowerers f1 and f2. a and b 2 datas are written in seq in master simultaneouly. F1 has replication lags of 1 min and f2 of 2 min. Now clinet reads from f1 after making update in > 1 min and less than 2 min, f1 will give data a, as that is written in 1 min of write to master. Again the read is made but this time with f2 in time >= 1 min and < 2 min , hence no data is found in f2 as a and b are not written in < 2min. Solution to this is to use client hash and go to same replica again and again as monotonicty will be maintained per replica. It just that during replication lag , monotonicity will not be miantained between different replicas`
+`Suppose we have master and 2 folowerers f1 and f2. a and b 2 datas are written in seq in master simultaneouly. F1 has replication lags of 1 min and f2 of 2 min. Now client reads from f1 after making update in > 1 min and less than 2 min, f1 will give data a, as that is written in 1 min of write to master. Again the read is made but this time with f2 in time >= 1 min and < 2 min , hence no data is found in f2 as a and b are not written in < 2min. Solution to this is to use client hash and go to same replica again and again as monotonicty will be maintained per replica. It just that during replication lag , monotonicity will not be miantained between different replicas`
 
 Because of followers falling behind, it's possible for a user to see things _moving backward in time_.
 
@@ -1193,13 +1270,14 @@ One solution is to make sure that any writes that are causally related to each o
 
 #### Solutions for replication lag
 
+https://ebrary.net/64711/computer_science/solutions_replication
 _Transactions_ exist so there is a way for a database to provide stronger guarantees so that the application can be simpler.
 
 ### Multi-leader replication
 
 Leader-based replication has one major downside: there is only one leader, and all writes must go through it.
 
-A natural extension is to allow more than one node to accept writes (_multi-leader_, _master-master_ or _active/active_ replication) where each leader simultaneously acts as a follower to the other leaders.
+A natural extension is to allow more than one node to accept writes (_multi-leader_, _master-master_ or _active/active_ replication) _where each leader simultaneously acts as a follower to the other leaders._
 
 #### Use cases for multi-leader replication
 
@@ -1231,13 +1309,13 @@ _Real-time collaborative editing_ applications allow several people to edit a do
 
 The user edits a document, the changes are instantly applied to their local replica and asynchronously replicated to the server and any other user.
 
-If you want to avoid editing conflicts, you must the lock the document before a user can edit it.
+If you want to avoid editing conflicts, you must lock the document before a user can edit it.
 
 For faster collaboration, you may want to make the unit of change very small (like a keystroke) and avoid locking.
 
 #### Handling write conflicts
 
-The biggest problem with multi-leader replication is when conflict resolution is required. This problem does not happen in a single-leader database.
+**The biggest problem with multi-leader replication is when conflict resolution is required**. This problem does not happen in a single-leader database.
 
 `If we ensure that all writes of a particular record go through same master/datacenter we can achieve multi-leader as well as conflict control hence no conflict will occur then`
 
@@ -1249,7 +1327,7 @@ If you want synchronous conflict detection, you might as well use single-leader 
 
 ##### Conflict avoidance
 
-The simplest strategy for dealing with conflicts is to avoid them. If all writes for a particular record go through the sae leader, then conflicts cannot occur.
+The simplest strategy for dealing with conflicts is to avoid them. If all writes for a particular record go through the same leader, then conflicts cannot occur.
 
 On an application where a user can edit their own data, you can ensure that requests from a particular user are always routed to the same datacenter and use the leader in that datacenter for reading and writing.
 
@@ -1289,6 +1367,8 @@ In circular and star topologies a write might need to pass through multiple node
 In all-to-all topology (mesh topology) fault tolerance is better as messages can travel along different paths avoiding a single point of failure. It has some issues too, some network links may be faster than others and some replication messages may "overtake" others. To order events correctly. there is a technique called _version vectors_. PostgresSQL BDR does not provide casual ordering of writes, and Tungsten Replicator for MySQL doesn't even try to detect conflicts.
 
 Example : Suppose we have Client1 which inserts a data to leader 1 and client2 which updates data to leader 2. Now timestamp of insert timestamp of update. Here as we can see timestamp will not work as data is to be inserted first. Suppose now we have leader 3 and it has to get in sync with leader 1 and 2. It first receives the chnage of leader 2 related to update then leader 1 related to insert, it will not work. For this we need `_version vectors_`.
+
+**In master leader, the master handles all the writes and load increases and thats where the sharding comes into play**
 
 ### Leaderless replication
 
@@ -2541,11 +2621,20 @@ Graph algorithms often have a lot of cross-machine communication overhead, and t
 
 If your graph can fit into memory on a single computer, it's quite likely that a single-machine algorithm will outperform a distributed batch process. If the graph is too big to fit on a single machine, a distributed approach such as Pregel is unavoidable.
 
-`important point while learing microservice architechture : Api gateway which is LB is exposed to the world is rep for handling all api req use HTTPS exposed to the outer and internally in can use http ws https or any other protocol but for client (Android and ios for type of user determination) it is always https`
+`Important point while learing microservice architechture : Api gateway which is LB is exposed to the world is rep for handling all api req use HTTPS exposed to the outer and internally in can use http ws https or any other protocol but for client (Android and ios for type of user determination) it is always https`
 
 ## Stream processing
 
+https://medium.com/@durgaswaroop/a-practical-introduction-to-kafka-storage-internals-d5b544f6925f
+
+Real Time Streaming Protocol
+The Real Time Streaming Protocol (RTSP) is a network control protocol designed for use in entertainment and communications systems to control streaming media servers. The protocol is used for establishing and controlling media sessions between endpoints.
+
+MQTT is an open OASIS and ISO standard lightweight, publish-subscribe network protocol that transports messages between devices. The protocol usually runs over TCP/IP; however, any network protocol that provides ordered, lossless, bi-directional connections can support MQTT.
+
 We can run the processing continuously, abandoning the fixed time slices entirely and simply processing every event as it happens, that's the idea behind _stream processing_. Data that is incrementally made available over time.
+
+https://www.youtube.com/watch?v=kfPzC0TmSJ0
 
 ### Transmitting event streams
 
@@ -3138,3 +3227,255 @@ We should stop regarding users as metrics to be optimised, and remember that the
 We should allow each individual to maintain their privacy, their control over their own data, and not steal that control from them through surveillance.
 
 We should not retain data forever, but purge it as soon as it is no longer needed.
+
+## Distributed system summary
+
+A Thorough Introduction to Distributed Systems
+What are distributed systems and why are they so complicated?
+Stanislav Kozlovski
+Stanislav Kozlovski
+Follow
+Apr 28, 2018 · 25 min read
+
+Image for post
+A bear contemplating distributed systems
+Table of Contents 
+Introduction
+1. What is a distributed system?
+2. Why distribute a system?
+3. Database scaling example
+4. Decentralized vs. distributed
+
+Distributed System Categories
+1. Distributed Data Stores
+2. Distributed Computing
+3. Distributed File Systems
+4. Distributed Messaging
+5. Distributed Applications
+6. Distributed Ledgers
+
+Summary
+Introduction
+With the ever-growing technological expansion of the world, distributed systems are becoming more and more widespread. They are a vast and complex field of study in computer science.
+This article aims to introduce you to distributed systems in a basic manner, showing you a glimpse of the different categories of such systems while not diving too deeply into the details.
+What is a distributed system?
+A distributed system in its simplest definition is a group of computers working together to appear as a single computer to the end-user.
+These machines have a shared state, operate concurrently, and can fail independently without affecting the whole system’s uptime.
+I propose we incrementally work through an example of distributing a system so that you can get a better sense of it all.
+Image for post
+A traditional stack
+Let’s go with a database! Traditional databases are stored on the filesystem of one single machine. Whenever you want to fetch/insert information in it, you talk to that machine directly.
+For us to distribute this database system, we’d need to have this database running on multiple machines at the same time. The user must be able to talk to whichever machine he chooses and should not be able to tell that he is not talking to a single machine — if he inserts a record into node#1, node #3 must be able to return that record.
+Image for post
+An architecture that can be considered distributed
+Why distribute a system?
+Systems are always distributed by necessity. The truth of the matter is that managing distributed systems is a complex topic chock-full of pitfalls and landmines. It is a headache to deploy, maintain, and debug distributed systems — so why go there at all?
+What a distributed system enables you to do is scale horizontally. Going back to our previous example of the single database server, the only way to handle more traffic would be to upgrade the hardware the database is running on. This is called scaling vertically.
+Scaling vertically is all well and good if you can, but after a certain point, you will see that even the best hardware is not sufficient for enough traffic, not to mention impractical to host.
+Scaling horizontally simply means adding more computers, rather than upgrading the hardware of a single one.
+Image for post
+Horizontal scaling becomes much cheaper after a certain threshold
+It is significantly cheaper than vertical scaling after a certain threshold, but that is not its main case for preference.
+Vertical scaling can only bump your performance up to the latest hardware capabilities. These capabilities prove to be insufficient for technological companies with moderate to big workloads.
+The best thing about horizontal scaling is that you have no cap on how much you can scale — whenever performance degrades you simply add another machine, up to infinity potentially.
+Easy scaling is not the only benefit you get from distributed systems. Fault tolerance and low latency are also equally as important.
+Fault tolerance means that a cluster of ten machines across two data centers is inherently more fault-tolerant than a single machine. Even if one data center catches on fire, your application would still work.
+Low latency refers to the idea that the time for a network packet to travel the world is physically bounded by the speed of light. For example, the shortest possible time for a request’s round-trip time (that is, go back and forth) in a fiber-optic cable between New York to Sydney is 160ms. Distributed systems allow you to have a node in both cities, allowing traffic to hit the node that is closest to it.
+For a distributed system to work, though, you need the software running on those machines to be specifically designed for running on multiple computers at the same time and handling the problems that come along with it. This turns out to be no easy feat.
+Scaling our Database
+Imagine that our web application got insanely popular. Imagine also that our database started getting twice as many queries per second as it can handle. Your application would immediately start to decline in performance and this would get noticed by your users.
+Let’s work together and make our database scale to meet our high demands.
+In a typical web application, you normally read information much more frequently than you insert new information or modify old info.
+Image for post
+There is a way to increase read performance, and that is by the Primary-Secondary Replication strategy. Here, you create two new database servers that sync up with the main one. The catch is that you can only read from these new instances.
+Whenever you insert or modify information, you talk to the primary database. It, in turn, asynchronously informs the secondary database of the change, and they save it as well.
+Congratulations, you can now execute 3x as many read queries! Isn’t this great?
+The pitfall
+Gotcha! We immediately lost the C in our relational database’s ACID guarantees, which stands for Consistency.
+You see, there now exists a possibility in which we insert a new record into the database, issue a read query for it immediately afterward, and then get nothing back — as if it didn’t exist!
+Propagating the new information from the primary database to the secondary database does not happen instantaneously. There actually exists a time window in which you can fetch stale information. If this were not the case, your write performance would suffer, as it would have to synchronously wait for the data to be propagated.
+Distributed systems come with a handful of trade-offs. This particular issue is one you will have to live with if you want to adequately scale.
+Continuing to scale
+Using the secondary database approach, we can horizontally scale our read traffic up to some extent. That’s great, but we’ve hit a wall in regards to our write traffic — it’s still all in one server!
+We’re not left with many options here. We simply need to split our write traffic into multiple servers, as one is not able to handle it.
+One way is to go with a multi-master replication strategy. There, instead of a secondary database that you can only read from, you have multiple primary nodes that support reads and writes. Unfortunately, this gets complicated quickly, as you now have the ability to create conflicts (e.g insert two records with the same ID).
+Let’s go with another technique called sharding (also called partitioning).
+With sharding, you split your server into multiple smaller servers, called shards. These shards all hold different records — you create a rule as to what kind of records go into which shard. It is very important to create the rule such that the data gets spread in a uniform way.
+A possible approach to this is to define ranges according to some information about a record (e.g users with name A-D).
+Image for post
+This sharding key should be chosen very carefully, as the load is not always equal based on arbitrary columns. (e.g more people have a name starting with C than Z). A single shard that receives more requests than others is called a hot spot and must be avoided. Once split up, re-sharding data becomes incredibly expensive and can cause significant downtime, as was the case with FourSquare’s infamous 11-hour outage.
+To keep our example simple, assume our client (the Rails app) knows which database to use for each record. It is also worth noting that there are many strategies for sharding, and this is a simple example to illustrate the concept.
+We have won quite a lot right now — we can increase our write traffic N times, where N is the number of shards. This practically gives us almost no limit — imagine how finely-grained we can get with this partitioning.
+The pitfall
+Everything in software engineering is more or less a trade-off, and this is no exception. Sharding is no simple feat and is best avoided until it’s really needed.
+We have now made queries by keys other than the partitioned key incredibly inefficient (they need to go through all of the shards). SQL JOIN queries are even worse and complex ones become practically unusable.
+Decentralized vs. distributed
+Before we go any further, I’d like to make a distinction between the two terms.
+Even though the words sound similar and can be concluded to mean the same logically, their difference makes a significant technological and political impact.
+Decentralized is still distributed in the technical sense, but the whole decentralized systems are not owned by one actor. No single company can own a decentralized system; otherwise, it wouldn’t be decentralized anymore.
+This means that most systems we will go over today can be thought of as distributed centralized systems — and that is what they’re made to be.
+If you think about it, it’s harder to create a decentralized system because then you need to handle the case where some of the participants are malicious. This is not the case with normal distributed systems, as you know you own all the nodes.
+Note: This definition has been debated a lot and can be confused with others (peer-to-peer, federated). In early literature, it’s been defined differently as well. Regardless, what I gave you as a definition is what I feel is the most widely used now that blockchain and cryptocurrencies popularized the term.
+Distributed System Categories
+We are now going to go through a couple of distributed system categories and list their largest publicly-known production usage. Bear in mind that most numbers shown are outdated and are most probably significantly bigger as of the time you are reading this.
+Distributed data stores
+Distributed data stores are widely used and recognized as distributed databases. Most distributed databases are NoSQL non-relational databases, limited to key-value semantics. They provide incredible performance and scalability at the cost of consistency or availability.
+Known scale — Apple is known to use 75,000 Apache Cassandra nodes storing over 10 petabytes of data, back in 2015.
+We cannot go into discussions of distributed data stores without first introducing the CAP theorem.
+CAP theorem
+Proven way back in 2002, the CAP theorem states that a distributed data store cannot simultaneously be consistent, available, and partition-tolerant.
+Image for post
+Choose 2 out of 3 (But not Consistency and Availability)
+Some quick definitions:
+Consistency: What you read and write sequentially is what is expected (remember the gotcha with the database replication a few paragraphs ago?)
+Availability: The whole system does not die — every non-failing node always returns a response.
+Partition tolerance: The system continues to function and uphold its consistency/availability guarantees, in spite of network partitions.
+In reality, partition tolerance must be a given for any distributed data store. As mentioned in many places, one of which is this great article, you cannot have consistency and availability without partition tolerance.
+Think about it: If you have two nodes that accept information and their connection dies — how are they both going to be available and simultaneously provide you with consistency? They have no way of knowing what the other node is doing, and as such, can either become offline (unavailable) or work with stale information (inconsistent).
+Image for post
+What do we do?
+In the end, you’re left to choose if you want your system to be strongly consistent or highly available under a network partition.
+Practice shows that most applications value availability more. You do not necessarily always need strong consistency. Even then, that trade-off is not necessarily made because you need the 100% availability guarantee, but rather because network latency can be an issue when having to synchronize machines to achieve strong consistency. These and more factors make applications typically opt for solutions that offer high availability.
+Such databases settle with the weakest consistency model — eventual consistency (strong vs. eventual consistency explanation). This model guarantees that if no new updates are made to a given item, eventually all accesses to that item will return the latest updated value.
+Those systems provide BASE properties (as opposed to traditional databases’ ACID):
+Basically Available — The system always returns a response.
+Soft state — The system could change over time, even during times of no input (due to eventual consistency).
+Eventual consistency — In the absence of input, the data will spread to every node sooner or later — thus becoming consistent.
+Examples of such available distributed databases — Cassandra, Riak, Voldemort.
+Of course, there are other data stores that prefer stronger consistency — HBase, Couchbase, Redis, Zookeeper.
+The CAP theorem is worthy of multiple articles on its own — some regarding how you can tweak a system’s CAP properties depending on how the client behaves, and others on how it is not understood properly.
+Cassandra
+Cassandra, as mentioned above, is a distributed No-SQL database that prefers the AP properties out of the CAP, settling with eventual consistency. I must admit this may be a bit misleading, as Cassandra is highly configurable — you can make it provide strong consistency at the expense of availability as well, but that is not its common use case.
+Cassandra uses consistent hashing to determine which nodes out of your cluster must manage the data you are passing in. You set a replication factor, which basically states how many nodes you want to replicate your data.
+Image for post
+Sample write
+When reading, you will read from those nodes only.
+Cassandra is massively scalable, providing absurdly high write throughput.
+Image for post
+Possibly biased diagram, showing writes per second benchmarks. Taken from here.
+Even though this diagram might be biased and it looks like it compares Cassandra to databases set to provide strong consistency (otherwise I can’t see why MongoDB would drop performance when upgraded from four to eight nodes), this should still show what a properly set up Cassandra cluster is capable of.
+Regardless, in the distributed systems trade-off which enables horizontal scaling and incredibly high throughput, Cassandra does not provide some fundamental features of ACID databases — namely, transactions.
+Consensus
+Database transactions are tricky to implement in distributed systems, as they require each node to agree on the right action to take (abort or commit). This is known as consensus and it is a fundamental problem in distributed systems.
+Reaching the type of agreement needed for the “transaction commit” problem is straightforward if the participating processes and the network are completely reliable. However, real systems are subject to a number of possible faults, such as process crashes, network partitioning, and lost, distorted, or duplicated messages.
+This poses an issue — it has been proven impossible to guarantee that a correct consensus is reached within a bounded time frame on a non-reliable network.
+In practice, though, there are algorithms that reach consensus on a non-reliable network pretty quickly. Cassandra actually provides lightweight transactions through the use of the Paxos algorithm for distributed consensus.
+Distributed Computing
+Distributed computing is the key to the influx of Big Data processing we’ve seen in recent years. It is the technique of splitting an enormous task (e.g aggregate 100 billion records), of which no single computer is capable of practically executing on its own, into many smaller tasks, each of which can fit into a single commodity machine. You split your huge task into many smaller ones, have them execute on many machines in parallel, aggregate the data appropriately, and you have solved your initial problem. This approach again enables you to scale horizontally — when you have a bigger task, simply include more nodes in the calculation.
+Known Scale — Folding@Home had 160k active machines in 2012
+An early innovator in this space was Google, which by the necessity of their large amounts of data had to invent a new paradigm for distributed computation — MapReduce. They published a paper on it in 2004 and the open-source community later created Apache Hadoop based on it.
+MapReduce
+MapReduce can be simply defined as two steps — mapping the data and reducing it to something meaningful.
+Let’s get at it with an example again:
+Say we are Medium and we stored our enormous information in a secondary distributed database for warehousing purposes. We want to fetch data representing the number of claps issued each day throughout April 2017 (a year ago).
+This example is kept as short, clear, and simple as possible, but imagine we are working with loads of data (e.g analyzing billions of claps). We won’t be storing all of this information on one machine obviously and we won’t be analyzing all of this with one machine only. We also won’t be querying the production database but rather some “warehouse” database built specifically for low-priority offline jobs.
+Image for post
+Each map job is a separate node transforming as much data as it can. Each job traverses all of the data in the given storage node and maps it to a simple tuple of the date and the number one. Then, three intermediary steps (which nobody talks about) are done — Shuffle, Sort, and Partition. They basically further arrange the data and delete it to the appropriate Reduce job. As we’re dealing with big data, we have each Reduce job separated to work on a single date only.
+This is a good paradigm and surprisingly enables you to do a lot with it — you can chain multiple MapReduce jobs for example.
+Better techniques
+MapReduce is somewhat legacy nowadays and brings some problems with it. Because it works in batches (jobs), a problem arises if your job fails — you need to restart the whole thing. A two-hour job failing can really slow down your whole data processing pipeline and you do not want that, especially in peak hours.
+Another issue is the time you wait until you receive results. In real-time analytic systems (which all have big data and thus use distributed computing), it is important to have your latest crunched data be as fresh as possible and certainly not from a few hours ago.
+As such, other architectures have emerged that address these issues — namely Lambda Architecture (mix of batch processing and stream processing) and Kappa Architecture (only stream processing). These advances in the field have brought new tools enabling them — Kafka Streams, Apache Spark, Apache Storm, Apache Samza.
+Distributed File Systems
+Distributed file systems can be thought of as distributed data stores. They’re the same thing as a concept — storing and accessing a large amount of data across a cluster of machines all appearing as one. They typically go hand in hand with distributed computing.
+Known scale — Yahoo is known for running HDFS on over 42,000 nodes for storage of 600 Petabytes of data, way back in 2011.
+Wikipedia defines the difference being that distributed file systems allow files to be accessed using the same interfaces and semantics as local files, not through a custom API like the Cassandra Query Language (CQL).
+HDFS
+Hadoop Distributed File System (HDFS) is the distributed file system used for distributed computing via the Hadoop framework. Boasting widespread adoption, it is used to store and replicate large files (GB or TB in size) across many machines.
+The architecture consists mainly of NameNodes and DataNodes. NameNodes are responsible for keeping metadata about the cluster, like which node contains which file blocks. They act as coordinators for the network by figuring out where best to store and replicate files, tracking the system’s health. DataNodes simply store files and execute commands like replicating a file, writing a new one, and others.
+Image for post
+Unsurprisingly, HDFS is best used with Hadoop for computation as it provides data awareness to the computation jobs. The jobs then get ran on the nodes storing the data. This leverages data locality, optimizes computations, and reduces the amount of traffic over the network.
+IPFS
+Interplanetary File System (IPFS) is an exciting new peer-to-peer protocol/network for a distributed file system. Leveraging blockchain technology, it boasts a completely decentralized architecture with no single owner nor point of failure.
+IPFS offers a naming system (similar to DNS) called IPNS and lets users easily access information. It stores files via historic versioning, similar to how Git does. This allows for accessing all of a file’s previous states.
+It is still undergoing heavy development (v0.4 as of the time of writing) but has already seen projects interested in building over it (FileCoin).
+Distributed Messaging
+Messaging systems provide a central place for the storage and propagation of messages/events inside your overall system. They allow you to decouple your application logic from directly talking with your other systems.
+Known Scale — LinkedIn’s Kafka cluster processed 1 trillion messages a day with peaks of 4.5 million messages a second.
+Image for post
+Simply put, a messaging platform works in the following way:
+A message is broadcast from the application which potentially creates it (called a producer), goes into the platform, and is read by potentially multiple applications that are interested in it (called consumers).
+If you need to save a certain event to a few places (e.g user creation to database, warehouse, email sending service, and whatever else you can come up with), a messaging platform is the cleanest way to spread that message.
+Consumers can either pull information out of the brokers (pull model) or have the brokers push information directly into the consumers (push model).
+There are a couple of popular top-notch messaging platforms:
+RabbitMQ: Message broker which allows you finer-grained control of message trajectories via routing rules and other easily configurable settings. This can be called a smart broker, as it has a lot of logic in it and tightly keeps track of messages that pass through it. It provides settings for both AP and CP from CAP. Uses a push model for notifying the consumers.
+Kafka: Message broker (and all-out platform) which is a bit lower level, as in it does not keep track of which messages have been read and does not allow for complex routing logic. This helps it achieve amazing performance. In my opinion, this is the biggest prospect in this space with active development from the open-source community and support from the Confluent team. Kafka arguably has the most widespread use by top tech companies. I wrote a thorough introduction to this where I go into detail about all of its goodness.
+Apache ActiveMQ: The oldest of the bunch, dating from 2004. Uses the JMS API, meaning it is geared towards Java EE applications. It got rewritten as ActiveMQ Artemis, which provides outstanding performance on par with Kafka.
+Amazon SQS: A messaging service provided by AWS. Lets you quickly integrate it with existing applications and eliminates the need to handle your own infrastructure, which might be a big benefit, as systems like Kafka are notoriously tricky to set up. Amazon also offers two similar services — SNS and MQ, the latter of which is basically ActiveMQ but managed by Amazon.
+Distributed Applications
+If you roll up five Rails servers behind a single load balancer, all connected to one database, could you call that a distributed application? Recall my definition from up above:
+A distributed system is a group of computers working together as to appear as a single computer to the end-user. These machines have a shared state, operate concurrently and can fail independently without affecting the whole system’s uptime.
+If you count the database as a shared state, you could argue that this can be classified as a distributed system — but you’d be wrong, as you’ve missed the “working together” part of the definition.
+A system is distributed only if the nodes communicate with each other to coordinate their actions.
+Therefore, something like an application running its back-end code on a peer-to-peer network can better be classified as a distributed application. Regardless, this is all needless classification that serves no purpose but to illustrate how fussy we are about grouping things together.
+Known scale — BitTorrent swarm of 193,000 nodes for an episode of Game of Thrones, April, 2014.
+Erlang virtual machine
+Erlang is a functional language that has great semantics for concurrency, distribution, and fault tolerance. The Erlang Virtual Machine itself handles the distribution of an Erlang application.
+Its model works by having many isolated lightweight processes, all with the ability to talk to each other via a built-in system of message passing. This is called the Actor Model and the Erlang OTP libraries can be thought of as a distributed actor framework (along the lines of Akka for the JVM).
+The model is what helps it achieve great concurrency rather simply — the processes are spread across the available cores of the system running them. Since this is indistinguishable from a network setting (apart from the ability to drop messages), Erlang’s VM can connect to other Erlang VMs running in the same data center or even in another continent. This swarm of virtual machines run one single application and handle machine failures via takeover (another node gets scheduled to run).
+In fact, the distributed layer of the language was added in order to provide fault tolerance. Software running on a single machine is always at risk of having that single machine dying and taking your application offline. Software running on many nodes allows for easier hardware failure handling, provided the application was built with that in mind.
+BitTorrent
+BitTorrent is one of the most widely used protocols for transferring large files across the web via torrents. The main idea is to facilitate file transfer between different peers in the network without having to go through the main server.
+Using a BitTorrent client, you connect to multiple computers across the world to download a file. When you open a .torrent file, you connect to a so-called tracker, which is a machine that acts as a coordinator. It helps with peer discovery, showing you the nodes in the network that have the file you want.
+Image for post
+a sample network
+You have the notions of two types of users, a leecher and a seeder. A leecher is a user who is downloading a file and a seeder is a user who is uploading the said file.
+The funny thing about peer-to-peer networks is that you, as an ordinary user, have the ability to join and contribute to the network.
+BitTorrent and its precursors (Gnutella, Napster) allow you to voluntarily host files and upload them to other users who want them. The reason BitTorrent is so popular is that it was the first of its kind to provide incentives for contributing to the network. Freeriding, where a user would only download files, was an issue with the previous file-sharing protocols.
+BitTorrent solved freeriding to an extent by making seeders upload more to those who provide the best download rates. It works by incentivizing you to upload while downloading a file. Unfortunately, after you’re done, nothing is making you stay active in the network. This causes a lack of seeders in the network who have the full file. As the protocol relies heavily on such users, solutions like private trackers came to fruition. Private trackers require you to be a member of a community (often invite-only) in order to participate in the distributed network.
+After advancements in the field, trackerless torrents were invented. This was an upgrade to the BitTorrent protocol that did not rely on centralized trackers for gathering metadata and finding peers, but instead uses new algorithms. One such instance is Kademlia (Mainline DHT), a distributed hash table (DHT) that allows you to find peers through other peers. In effect, each user performs a tracker’s duties.
+Distributed Ledgers
+A distributed ledger can be thought of as an immutable, append-only database that is replicated, synchronized, and shared across all nodes in the distributed network.
+Known scale — Ethereum Network had a peak of 1.3 million transactions a day on January 4th, 2018.
+They leverage the Event Sourcing pattern, allowing you to rebuild the ledger’s state at any time in its history.
+Blockchain
+Blockchain is the current underlying technology used for distributed ledgers and, in fact, marked their start. This latest and greatest innovation in the distributed space enabled the creation of the first-ever truly distributed payment protocol — Bitcoin.
+Blockchain is a distributed ledger carrying an ordered list of all transactions that ever occurred in its network. Transactions are grouped and stored in blocks. The whole blockchain is essentially a linked-list of blocks (hence the name). Said blocks are computationally expensive to create and are tightly linked to each other through cryptography.
+Simply said, each block contains a special hash (that starts with X amount of zeroes) of the current block’s contents (in the form of a Merkle Tree) plus the previous block’s hash. This hash requires a lot of CPU power to be produced because the only way to come up with it is through brute force.
+Image for post
+Simplified blockchain
+Miners are the nodes who try to compute the hash (via brute force). The miners all compete with each other for who can come up with a random string (called a nonce) which, when combined with the contents, produces the aforementioned hash. Once somebody finds the correct nonce, he broadcasts it to the whole network. The string is then verified by each node on its own and accepted into their chain.
+This translates into a system where it is absurdly costly to modify the blockchain and absurdly easy to verify that it is not tampered with.
+It is costly to change a block’s contents because that would produce a different hash. Remember that each subsequent block‘s hash is dependent on it. If you were to change a transaction in the first block of the picture above, you would change the Merkle Root. This would, in turn, change the block’s hash (most likely without the needed leading zeroes) — that would change block #2’s hash, and so on and so on. This means you’d need to brute-force a new nonce for every block after the one you just modified.
+The network always trusts and replicates the longest valid chain. In order to cheat the system and eventually produce a longer chain, you’d need more than 50% of the total CPU power used by all the nodes.
+Blockchain can be thought of as a distributed mechanism for emergent consensus. A consensus is not achieved explicitly — there is no election or fixed moment when consensus occurs. Instead, a consensus is an emergent product of the asynchronous interaction of thousands of independent nodes, all following protocol rules.
+This unprecedented innovation has recently become a boom in the tech space, with people predicting it will mark the creation of the Web 3.0. It is definitely the most exciting space in the software engineering world right now, filled with extremely challenging and interesting problems waiting to be solved.
+Bitcoin
+What previous distributed payment protocols lacked was a way to practically prevent the double-spending problem in real-time, in a distributed manner. Research has produced interesting propositions[1], but Bitcoin was the first to implement a practical solution with clear advantages over others.
+The double-spending problem states that an actor (e.g Bob) cannot spend his single resource in two places. If Bob has $1, he should not be able to give it to both Alice and Zack — it is only one asset, and it cannot be duplicated. It turns out it is really hard to truly achieve this guarantee in a distributed system. There are some interesting mitigation approaches predating blockchain, but they do not completely solve the problem in a practical way.
+Double-spending is solved easily by Bitcoin, as only one block is added to the chain at a time. Double-spending is impossible within a single block; therefore, even if two blocks are created at the same time, only one will come to be on the eventual longest chain.
+Image for post
+Bitcoin relies on the difficulty of accumulating CPU power.
+While in a voting system an attacker needs only add nodes to the network (which is easy, as free access to the network is a design target), in a CPU power-based scheme, an attacker faces a physical limitation: getting access to more and more powerful hardware.
+This is also the reason malicious groups of nodes need to control over 50% of the computational power of the network to actually carry any successful attack. Any less than that and the rest of the network will create a longer blockchain faster.
+Ethereum
+Ethereum can be thought of as a programmable blockchain-based software platform. It has its own cryptocurrency (Ether) which fuels the deployment of smart contracts on its blockchain.
+Smart contracts are a piece of code stored as a single transaction in the Ethereum blockchain. To run the code, all you have to do is issue a transaction with a smart contract as its destination. This, in turn, makes the miner nodes execute the code and whatever changes it incurs. The code is executed inside the Ethereum Virtual Machine.
+Solidity, Ethereum’s native programming language, is what’s used to write smart contracts. It is a turing-complete programming language which directly interfaces with the Ethereum blockchain, allowing you to query state like balances or other smart contract results. To prevent infinite loops, running the code requires some amount of Ether.
+As the blockchain can be interpreted as a series of state changes, a lot of Distributed Applications (DApps) have been built on top of Ethereum and similar platforms.
+Further usages of distributed ledgers
+Proof of Existence: A service to anonymously and securely store proof that a certain digital document existed at some point in time. Useful for ensuring document integrity, ownership, and timestamping.
+Decentralized Autonomous Organizations (DAO): Organizations that use blockchain as a means of reaching consensus on the organization’s improvement propositions. Examples are Dash’s governance system and the SmartCash project.
+Decentralized Authentication: Store your identity on the blockchain, enabling you to use single sign-on (SSO) everywhere. Examples: Sovrin, Civic.
+And many, many more. The distributed ledger technology really did open up endless possibilities. Some are probably being invented as we speak!
+Summary
+In the short span of this article, we managed to define what a distributed system is, why you’d use one, and to go over each category a little. Some important things to remember are:
+Distributed systems are complex.
+They are chosen by the necessity of scale and price.
+They are harder to work with.
+CAP Theorem — Consistency/Availability trade-off.
+They have six categories — data stores, computing, file systems, messaging systems, ledgers, and applications.
+To be frank, we have barely touched the surface of distributed systems. I did not have the chance to thoroughly tackle and explain core problems like consensus, replication strategies, event ordering & time, failure tolerance, broadcasting a message across the network, and others.
+Caution
+Let me leave you with a parting forewarning:
+You must stray away from distributed systems as much as you can. The complexity and overhead they incur is not worth the effort if you can avoid the problem by either solving it in a different way, or by some other out-of-the-box solution.
+
+[1]
+Combating Double-Spending Using Cooperative P2P Systems, 25–27 June 2007 — a proposed solution in which each ‘coin’ can expire and is assigned a witness (validator) to it being spent.
+Bitgold, December 2005 — A high-level overview of a protocol extremely similar to Bitcoin’s. It is said this is the precursor to Bitcoin.
+Further Distributed Systems Reading
+Designing Data-Intensive Applications, Martin Kleppmann: A great book that goes over everything in distributed systems and more.
+Cloud Computing Specialization, University of Illinois, Coursera: A long series of courses (6) going over distributed system concepts and applications.
+Jepsen: A blog explaining a lot of distributed technologies (ElasticSearch, Redis, MongoDB, etc).
+Thanks for taking the time to read through this long article!
+If, by any chance, you found this informative or thought it provided you with value, please consider sharing with a friend who could use an introduction to this wonderful field of study.
