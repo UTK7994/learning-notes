@@ -461,6 +461,7 @@ http://highscalability.com/blog/2011/1/10/riaks-bitcask-a-log-structured-hash-ta
 ================================================================================
 
 https://www.youtube.com/watch?v=wxcCHvQeZ-U
+https://www.programmersought.com/article/67981440467/
 
 For read optimizations , which are not achievable using btree due to disk seek time, we can use logs , but it highly unlikely that someone will read the data in the same way as it was written unless its kafka where the queue order matters. So to do this we have to store data in such a way that it is read efficeint. For this we write the data to the buffer , sort the data to make it read friendly and flush to DB. SSD have eliminated the cost of random read IO as it was in HDD.
 
